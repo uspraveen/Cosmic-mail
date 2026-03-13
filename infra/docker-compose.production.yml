@@ -1,0 +1,79 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cosmic_mail}
+      POSTGRES_USER: ${POSTGRES_USER:-cosmic_mail}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cosmic_mail} -d ${POSTGRES_DB:-cosmic_mail}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  james:
+    image: apache/james:jpa-3.9.0
+    restart: unless-stopped
+    hostname: ${COSMIC_MAIL_PUBLIC_MAIL_HOSTNAME:?set COSMIC_MAIL_PUBLIC_MAIL_HOSTNAME}
+    volumes:
+      - james-data:/root/var
+      - ./james/conf/smtpserver.xml:/root/conf/smtpserver.xml:ro
+      - ./james/conf/imapserver.xml:/root/conf/imapserver.xml:ro
+      - ./james/conf/mailetcontainer.xml:/root/conf/mailetcontainer.xml:ro
+      - ./james/conf/dnsservice.xml:/root/conf/dnsservice.xml:ro
+      - ./james/conf/webadmin.properties:/root/conf/webadmin.properties:ro
+    ports:
+      - "25:25"
+    expose:
+      - "143"
+      - "587"
+      - "8000"
+
+  cosmic-mail:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      james:
+        condition: service_started
+    environment:
+      COSMIC_MAIL_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cosmic_mail}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-cosmic_mail}
+      COSMIC_MAIL_ADMIN_API_KEY: ${COSMIC_MAIL_ADMIN_API_KEY:?set COSMIC_MAIL_ADMIN_API_KEY}
+      COSMIC_MAIL_SECRET_KEY: ${COSMIC_MAIL_SECRET_KEY:?set COSMIC_MAIL_SECRET_KEY}
+      COSMIC_MAIL_MAIL_ENGINE_BACKEND: james
+      COSMIC_MAIL_JAMES_WEBADMIN_URL: http://james:8000
+      COSMIC_MAIL_PUBLIC_MAIL_HOSTNAME: ${COSMIC_MAIL_PUBLIC_MAIL_HOSTNAME:?set COSMIC_MAIL_PUBLIC_MAIL_HOSTNAME}
+      COSMIC_MAIL_SMTP_HOST: james
+      COSMIC_MAIL_SMTP_PORT: 25
+      COSMIC_MAIL_SMTP_USE_STARTTLS: "false"
+      COSMIC_MAIL_SMTP_AUTH_ENABLED: "false"
+      COSMIC_MAIL_SMTP_VALIDATE_CERTS: "false"
+      COSMIC_MAIL_IMAP_HOST: james
+      COSMIC_MAIL_IMAP_PORT: 143
+      COSMIC_MAIL_IMAP_USE_SSL: "false"
+      COSMIC_MAIL_IMAP_VALIDATE_CERTS: "false"
+      COSMIC_MAIL_SYNC_WORKER_ENABLED: ${COSMIC_MAIL_SYNC_WORKER_ENABLED:-true}
+      COSMIC_MAIL_SYNC_WORKER_INTERVAL_SECONDS: ${COSMIC_MAIL_SYNC_WORKER_INTERVAL_SECONDS:-60}
+      COSMIC_MAIL_SYNC_WORKER_BATCH_SIZE: ${COSMIC_MAIL_SYNC_WORKER_BATCH_SIZE:-100}
+      COSMIC_MAIL_ATTACHMENT_STORAGE_PATH: /data/attachments
+      COSMIC_MAIL_MAX_ATTACHMENT_SIZE_MB: ${COSMIC_MAIL_MAX_ATTACHMENT_SIZE_MB:-25}
+    volumes:
+      - attachment-data:/data/attachments
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/ready', timeout=5)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:
+  james-data:
+  attachment-data:

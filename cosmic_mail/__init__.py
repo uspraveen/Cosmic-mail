@@ -1,0 +1,2 @@
+"""Cosmic Mail package."""
+

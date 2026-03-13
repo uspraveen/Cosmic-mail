@@ -1,0 +1,15 @@
+.pytest_cache/
+.pytest_tmp/
+.venv/
+__pycache__/
+*.py[cod]
+*.sqlite3
+*.db
+.coverage
+dist/
+build/
+*.egg-info/
+*.tgz
+*.txt
+infra/.env
+.vendor/

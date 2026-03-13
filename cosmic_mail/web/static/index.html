@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cosmic Mail — Console</title>
+  <link rel="icon" type="image/png" href="/static/cosmic-glassy-thunder-logo.png">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<!-- Auth Overlay -->
+<div id="auth-overlay">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <div class="brand-mark">CM</div>
+      <div class="auth-logo-text">
+        <h1>Cosmic Mail</h1>
+        <p>Agent email infrastructure</p>
+      </div>
+    </div>
+    <h2>Sign in to your console</h2>
+    <p class="auth-sub">Enter your admin API key to access the management console.</p>
+    <form id="auth-form">
+      <div class="field mb-16">
+        <label class="field-label" for="api-key-input">API Key</label>
+        <input id="api-key-input" class="input input-mono" type="password" placeholder="cm_admin_…" autocomplete="off">
+      </div>
+      <button type="submit" class="btn btn-primary btn-full">Connect</button>
+    </form>
+  </div>
+</div>
+
+<!-- Main App -->
+<div id="app">
+
+  <!-- Sidebar -->
+  <aside id="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-mark">CM</div>
+      <span class="brand-name">Cosmic Mail</span>
+      <span class="brand-tag">Console</span>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-section">
+        <div class="nav-section-label">Main</div>
+        <div class="nav-item active" data-view="overview">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+          Overview
+        </div>
+        <div class="nav-item" data-view="agents">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          Agents
+          <span class="nav-badge" id="nav-badge-agents">0</span>
+        </div>
+        <div class="nav-item" data-view="inboxes">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+          Inboxes
+          <span class="nav-badge" id="nav-badge-inboxes">0</span>
+        </div>
+        <div class="nav-item" data-view="conversations">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          Conversations
+        </div>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-section-label">Infrastructure</div>
+        <div class="nav-item" data-view="domains">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          Domains
+          <span class="nav-badge" id="nav-badge-domains">0</span>
+        </div>
+        <div class="nav-item" data-view="webhooks">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>
+          Webhooks
+        </div>
+      </div>
+
+      <div class="nav-section">
+        <div class="nav-section-label">System</div>
+        <div class="nav-item" data-view="settings">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M4.93 19.07l-1.41 1.41M20 12h-2M6 12H4M19.07 19.07l-1.41-1.41M4.93 4.93l1.41 1.41M12 20v-2M12 6V4"/></svg>
+          Settings
+        </div>
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="system-status">
+        <div class="status-dot" id="status-dot"></div>
+        <span id="status-label">Connecting…</span>
+      </div>
+      <div class="sidebar-key-info" id="key-info"></div>
+    </div>
+  </aside>
+
+  <!-- Topbar -->
+  <header id="topbar">
+    <button id="sidebar-toggle" class="btn btn-ghost btn-icon" title="Toggle sidebar">
+      <svg id="sidebar-toggle-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+    </button>
+    <span class="topbar-title" id="topbar-title">Overview</span>
+    <div class="topbar-actions">
+      <button class="btn btn-ghost btn-sm" id="refresh-btn">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.24"/></svg>
+        Refresh
+      </button>
+      <button class="btn btn-ghost btn-sm btn-icon" id="clear-key-btn" title="Disconnect">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main id="main">
+
+    <!-- ── Overview ─────────────────────────────────────────────────────── -->
+    <div class="view-panel active" data-view-panel="overview">
+      <div class="page-header">
+        <div class="page-title">Overview</div>
+        <div class="page-desc">System health, agents, inboxes at a glance.</div>
+      </div>
+
+      <div id="org-setup-banner"></div>
+
+      <div class="stats-grid" id="stats-grid">
+        <div class="stat-card"><div class="stat-label">Agents</div><div class="stat-value" id="stat-agents">—</div><div class="stat-meta">active profiles</div></div>
+        <div class="stat-card"><div class="stat-label">Inboxes</div><div class="stat-value" id="stat-inboxes">—</div><div class="stat-meta">provisioned mailboxes</div></div>
+        <div class="stat-card"><div class="stat-label">Domains</div><div class="stat-value" id="stat-domains">—</div><div class="stat-meta">active / total</div></div>
+        <div class="stat-card"><div class="stat-label">Sync</div><div class="stat-value" id="stat-sync">—</div><div class="stat-meta">worker status</div></div>
+      </div>
+
+      <div class="two-col">
+        <div class="stack">
+          <div class="card">
+            <div class="card-header"><div class="card-title">Setup checklist</div></div>
+            <div class="check-list" id="checklist"></div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Recent agents</div>
+              <button class="btn btn-secondary btn-sm" data-view="agents">View all</button>
+            </div>
+            <div id="overview-agents-list"></div>
+          </div>
+        </div>
+        <div class="stack">
+          <div class="card">
+            <div class="card-header"><div class="card-title">System</div></div>
+            <div id="system-status-card"></div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Quick actions</div>
+            </div>
+            <div class="stack">
+              <button class="btn btn-secondary" data-view="agents" data-action="open-modal" data-modal="create-agent">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                New agent
+              </button>
+              <button class="btn btn-secondary" data-view="inboxes" data-action="open-modal" data-modal="create-inbox">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                New inbox
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Agents ────────────────────────────────────────────────────────── -->
+    <div class="view-panel" data-view-panel="agents">
+      <div class="page-header">
+        <div class="page-title">Agents</div>
+        <div class="page-desc">Agent profiles with personas, prompts, and email identities.</div>
+      </div>
+      <div class="section-header">
+        <div></div>
+        <div class="section-actions">
+          <button class="btn btn-primary btn-sm" id="new-agent-btn">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New agent
+          </button>
+        </div>
+      </div>
+      <div id="agents-table-container"></div>
+    </div>
+
+    <!-- ── Inboxes ───────────────────────────────────────────────────────── -->
+    <div class="view-panel" data-view-panel="inboxes">
+      <div class="page-header">
+        <div class="page-title">Inboxes</div>
+        <div class="page-desc">Provisioned mailboxes and sync status.</div>
+      </div>
+      <div id="cred-banner-container"></div>
+      <div class="section-header">
+        <div></div>
+        <div class="section-actions">
+          <button class="btn btn-ghost btn-sm" id="sync-all-btn">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.24"/></svg>
+            Sync all
+          </button>
+          <button class="btn btn-primary btn-sm" id="new-inbox-btn">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New inbox
+          </button>
+        </div>
+      </div>
+      <div id="inboxes-table-container"></div>
+    </div>
+
+    <!-- ── Conversations ─────────────────────────────────────────────────── -->
+    <div class="view-panel panel-flush" data-view-panel="conversations">
+      <div class="conversation-layout">
+        <div class="thread-list-pane">
+          <div class="thread-list-header">
+            <span class="thread-list-title">Threads</span>
+            <button class="btn btn-ghost btn-sm btn-icon" id="compose-btn" title="Compose">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+            </button>
+          </div>
+          <div class="thread-list-select">
+            <select class="select" id="thread-mailbox-select"></select>
+          </div>
+          <div id="thread-list"></div>
+        </div>
+        <div class="message-pane" id="message-pane">
+          <div class="message-pane-empty">
+            <div class="empty-state">
+              <div class="empty-icon">✉️</div>
+              <div class="empty-title">No thread selected</div>
+              <div class="empty-desc">Select a thread on the left to read messages.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Domains ───────────────────────────────────────────────────────── -->
+    <div class="view-panel" data-view-panel="domains">
+      <div class="page-header">
+        <div class="page-title">Domains</div>
+        <div class="page-desc">Email domain setup, DNS records, and deliverability.</div>
+      </div>
+      <div class="two-col">
+        <div class="stack">
+          <div id="domains-table-container"></div>
+          <div id="domain-detail-container"></div>
+        </div>
+        <div class="stack">
+          <div class="card">
+            <div class="card-header"><div class="card-title">Link a domain</div></div>
+            <form id="domain-form" class="form-grid">
+              <div class="field">
+                <label class="field-label">Domain name</label>
+                <input id="domain-name-input" class="input" type="text" placeholder="mail.company.com">
+                <span class="field-hint">The domain you'll use for sending and receiving email.</span>
+              </div>
+              <button type="submit" class="btn btn-primary">Link domain</button>
+            </form>
+          </div>
+          <div class="card" id="deliverability-card" style="display:none">
+            <div class="card-header"><div class="card-title">Deliverability settings</div></div>
+            <form id="deliverability-form" class="form-grid">
+              <div class="field">
+                <label class="field-label">DMARC policy</label>
+                <select id="dmarc-policy-select" class="select">
+                  <option value="none">none</option>
+                  <option value="quarantine">quarantine</option>
+                  <option value="reject">reject</option>
+                </select>
+              </div>
+              <div class="field">
+                <label class="field-label">Aggregate report email</label>
+                <input id="dmarc-report-email" class="input" type="email" placeholder="security@company.com">
+              </div>
+              <div class="field">
+                <label class="field-label">DKIM selector</label>
+                <input id="dkim-selector-input" class="input" placeholder="default">
+              </div>
+              <div class="flex gap-8">
+                <button type="submit" class="btn btn-secondary btn-sm">Save settings</button>
+                <button type="button" id="rotate-dkim-btn" class="btn btn-ghost btn-sm">Rotate DKIM</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Webhooks ──────────────────────────────────────────────────────── -->
+    <div class="view-panel" data-view-panel="webhooks">
+      <div class="page-header">
+        <div class="page-title">Webhooks</div>
+        <div class="page-desc">Get notified when messages arrive or are sent.</div>
+      </div>
+      <div class="two-col">
+        <div id="webhooks-table-container"></div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">Register webhook</div></div>
+          <form id="webhook-form" class="form-grid">
+            <div class="field">
+              <label class="field-label">Endpoint URL</label>
+              <input id="webhook-url-input" class="input" type="url" placeholder="https://your-server.com/webhook">
+            </div>
+            <div class="field">
+              <label class="field-label">Event type</label>
+              <select id="webhook-event-select" class="select">
+                <option value="*">All events (*)</option>
+                <option value="message.received">message.received</option>
+                <option value="message.sent">message.sent</option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="field-label">Filter to inbox <span class="text-muted">(optional)</span></label>
+              <select id="webhook-mailbox-select" class="select"></select>
+            </div>
+            <div class="field">
+              <label class="field-label">Signing secret <span class="text-muted">(optional)</span></label>
+              <input id="webhook-secret-input" class="input input-mono" type="text" placeholder="Your secret for HMAC verification">
+              <span class="field-hint">Payload will be signed with <code>X-Cosmic-Mail-Signature</code>.</span>
+            </div>
+            <button type="submit" class="btn btn-primary">Register</button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Settings ──────────────────────────────────────────────────────── -->
+    <div class="view-panel" data-view-panel="settings">
+      <div class="page-header">
+        <div class="page-title">Settings</div>
+        <div class="page-desc">API keys, sync worker, and organization management.</div>
+      </div>
+      <div class="two-col">
+        <div class="stack">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Organization API keys</div>
+              <button class="btn btn-primary btn-sm" id="new-api-key-btn">New key</button>
+            </div>
+            <div id="api-keys-container"></div>
+            <div id="api-key-banner" class="hidden"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Background sync worker</div>
+              <button class="btn btn-secondary btn-sm" id="run-sync-btn">Run now</button>
+            </div>
+            <div id="sync-worker-container"></div>
+          </div>
+        </div>
+        <div class="stack">
+          <div class="card">
+            <div class="card-header"><div class="card-title">Console session</div></div>
+            <div class="form-grid">
+              <div class="field">
+                <label class="field-label">Current API key</label>
+                <div class="copy-block">
+                  <code id="current-key-display">—</code>
+                </div>
+              </div>
+              <button class="btn btn-danger btn-sm" id="disconnect-btn">Disconnect</button>
+            </div>
+          </div>
+          <div class="card" id="org-management-card">
+            <div class="card-header"><div class="card-title">Organization</div></div>
+            <div id="org-detail-container"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- Modal -->
+<div id="modal-overlay" class="hidden">
+  <div class="modal" id="modal">
+    <div class="modal-header">
+      <span class="modal-title" id="modal-title">Modal</span>
+      <button class="modal-close" id="modal-close">✕</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-footer" id="modal-footer"></div>
+  </div>
+</div>
+
+<!-- Toast Stack -->
+<div id="toast-stack"></div>
+
+<script type="module" src="/static/api.js"></script>
+<script type="module" src="/static/state.js"></script>
+<script type="module" src="/static/templates.js"></script>
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>

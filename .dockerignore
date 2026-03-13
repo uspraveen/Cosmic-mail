@@ -1,0 +1,12 @@
+.git
+.pytest_cache
+.pytest_tmp
+.venv
+.vendor
+__pycache__
+*.py[cod]
+*.db
+*.sqlite3
+build
+dist
+*.egg-info
