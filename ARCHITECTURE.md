@@ -11,10 +11,12 @@ The product should let operators and developers:
 - onboard organizations
 - link domains
 - provision inboxes
-- create agent identities
+- create agent identities with prompts, personas, signatures, and approval policies
 - link inboxes to agents
 - send and receive real email
 - normalize mail into product-owned threads and messages
+- queue agent outbound for human approval before delivery
+- push mail events to external systems via webhooks
 - operate the system through APIs first
 
 The system is intentionally not designed as:
@@ -56,6 +58,9 @@ Cosmic Mail should expose its own stable model:
 - `MailThread`
 - `MailMessage`
 - `MailDraft`
+- `MailAttachment`
+- `OutboundApproval`
+- `Webhook`
 
 It should not expose Apache James internals directly as the product API.
 
@@ -98,10 +103,13 @@ Important route groups:
 
 - organizations
 - domains
-- agents
+- agents (including avatar and signature-graphic upload/serve)
 - mailboxes
 - drafts
-- threads
+- threads (including reply-to-thread and mark-message-read)
+- attachments
+- approvals
+- webhooks
 - system
 
 ### 4.3 Domain Layer
@@ -132,9 +140,10 @@ Responsibilities:
 - domain onboarding
 - mailbox provisioning
 - agent lifecycle
-- draft send flow
-- inbound sync
+- draft send flow with approval queue interception
+- inbound sync and attachment extraction
 - sync worker behavior
+- webhook dispatch
 
 Key services:
 
@@ -146,6 +155,7 @@ Key services:
 - `conversations.py`
 - `inbound.py`
 - `outbound.py`
+- `webhooks.py`
 - `sync_manager.py`
 - `james.py`
 
@@ -161,8 +171,10 @@ Responsibilities:
 - organization and access workflows
 - domain onboarding and deliverability controls
 - inbox provisioning
-- agent management
-- conversation inspection
+- agent management with approval mode toggle and avatar / signature-graphic uploads
+- conversation inspection and reply
+- approval queue — filter tabs, detail pane, edit / approve / reject actions
+- webhook registration and management
 
 It is intentionally a thin client over the public API.
 
@@ -195,14 +207,17 @@ Responsibilities:
 `Domain`
 - a linked sending/receiving domain
 - stores generated deliverability settings and DNS posture
+- owns DKIM key material per selector
 
 `MailboxIdentity`
 - a provisioned email address under a domain
 - stores sync posture, quota, and encrypted credentials
 
 `AgentProfile`
-- the agent’s business identity
+- the agent's business identity
 - prompt, persona, signature, title, status
+- `approval_required: bool` — when true, all outbound drafts are queued before delivery
+- `avatar_url` and `signature_graphic_url` — served from the product API
 
 `AgentMailboxLink`
 - many-to-many relation between agents and inboxes
@@ -213,9 +228,28 @@ Responsibilities:
 
 `MailMessage`
 - normalized inbound or outbound message record
+- tracks read state
 
 `MailDraft`
 - explicit send pipeline state before delivery
+- status lifecycle: `draft → pending_approval → sent / failed`
+  - or on rejection: `pending_approval → draft` (editable again)
+
+`MailAttachment`
+- extracted attachment records linked to a message
+- content stored in the product database or on disk
+
+`OutboundApproval`
+- created when a draft send is intercepted because the agent has `approval_required`
+- status: `pending → approved` or `pending → rejected`
+- stores optional `reviewer_note` and `reviewed_at` timestamp
+- draft is editable while the approval is in `pending` state
+- on approve: immediately executes the outbound send
+- on reject: resets draft to `draft` state for editing
+
+`Webhook`
+- HTTP endpoint registered by an org to receive mail events
+- stores URL, enabled state, and secret for HMAC signature verification
 
 ### 5.2 Why Threads and Messages Are Product-Owned
 
@@ -227,16 +261,18 @@ Owning the thread/message model lets us:
 - keep consistent API responses
 - store product-specific metadata
 - enforce our own draft / send / sync semantics
+- queue and inspect outbound before delivery
 
 ## 6. Key Flows
 
 ### 6.1 Domain Onboarding
 
 1. Operator creates a domain under an organization.
-2. Product generates DNS records.
+2. Product generates DNS records (MX, SPF, DKIM, DMARC).
 3. Product provisions the domain in the mail engine.
 4. Operator publishes DNS records externally.
 5. Product verifies DNS and marks the domain active.
+6. Operator can rotate DKIM selector and key material at any time.
 
 ### 6.2 Mailbox Provisioning
 
@@ -251,23 +287,49 @@ Owning the thread/message model lets us:
 2. Operator sets prompt, signature, and default domain.
 3. Operator links one or more inboxes to the agent.
 4. One mailbox can be marked primary.
+5. Operator optionally uploads avatar and signature graphic.
+6. Operator optionally enables `approval_required` for human review of all outbound.
 
 ### 6.4 Outbound Mail
 
 1. Client creates a draft through the API.
 2. Product stores draft state.
 3. Client triggers send.
-4. Product loads mailbox credentials.
-5. Product sends through the outbound transport.
-6. Product persists normalized outbound message and thread updates.
+4. If the linked agent has `approval_required`:
+   - Draft status is set to `pending_approval`.
+   - An `OutboundApproval` record is created.
+   - Send is deferred. Route returns `queued_for_approval: true`.
+5. Otherwise, product loads mailbox credentials and sends through outbound transport.
+6. Outbound is DKIM-signed using the sending domain's active key.
+7. Signature logos are embedded as CID inline images.
+8. Product persists normalized outbound message and thread updates.
+9. Registered webhooks are dispatched with the event payload.
 
-### 6.5 Inbound Mail
+### 6.5 Approval Queue
+
+1. Human operator opens the Approvals section of the operator console.
+2. Pending approvals are listed with sender, recipient, and subject.
+3. Operator opens a detail pane to preview the full email body.
+4. Operator can optionally edit subject, body, and recipients before deciding.
+5. Approve: product calls `_execute_send` directly, bypassing the `approval_required` check, marks approval `approved`.
+6. Reject: draft reverts to `draft` status, approval is marked `rejected`, optional note is stored.
+
+### 6.6 Inbound Mail
 
 1. Mail arrives at Apache James.
 2. Inbox becomes readable over IMAP.
 3. Product sync worker or manual sync fetches new messages.
 4. Product normalizes them into threads and messages.
-5. API and operator console expose the normalized state.
+5. Attachments are extracted and stored per message.
+6. API and operator console expose the normalized state.
+7. Registered webhooks are dispatched with the event payload.
+
+### 6.7 Webhooks
+
+1. Operator registers a webhook URL with an optional secret.
+2. On inbound sync or outbound send, product fires an HTTP POST to each active webhook.
+3. Payload includes org ID, event type, thread and message context.
+4. Request includes an `X-Cosmic-Signature` header derived from the webhook secret for verification.
 
 ## 7. Runtime Topology
 
@@ -319,6 +381,7 @@ Path:
 - `cosmic_mail/services/outbound.py`
 
 This lets us evolve from direct SMTP toward stricter submission or relay-backed delivery.
+Inline image CID embedding and DKIM signing are handled here.
 
 ### 8.3 Inbound Transport Abstraction
 
@@ -333,16 +396,32 @@ This lets us change sync strategy later:
 - event bridge
 - JMAP or other integration
 
+### 8.4 Approval Queue
+
+Path:
+
+- `cosmic_mail/services/conversations.py`
+- `cosmic_mail/api/routes/approvals.py`
+
+The approval interception point is inside `send_draft`. Extracting `_execute_send` as a private method means `approve_outbound` can trigger the real send without re-entering the approval check. New review policies can be added without changing the route layer.
+
+### 8.5 Webhook Dispatch
+
+Path:
+
+- `cosmic_mail/services/webhooks.py`
+
+Webhook dispatch is invoked from the sync flow and the outbound send flow. Additional event types can be added by calling the dispatch helper from any service.
+
 ## 9. Current Gaps
 
 The biggest remaining architecture gaps are not CRUD issues. They are production-email concerns:
 
 - public deliverability validation
-- outbound DKIM signing integration
 - bounce and complaint ingestion
 - alias / forwarding layer
 - stronger abuse controls
-- better event-driven inbound processing
+- better event-driven inbound processing (IMAP IDLE or event bridge)
 - migrations / backup / restore hardening
 
 ## 10. Non-Goals

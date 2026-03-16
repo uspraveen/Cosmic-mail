@@ -23,14 +23,24 @@ This is beyond a prototype, but not yet complete public-internet email infrastru
 What is built:
 
 - organizations and org-scoped API keys
-- agent profiles with prompts, signatures, default domains, and mailbox links
+- agent profiles with prompts, signatures, personas, default domains, mailbox links, and approval mode
+- agent avatar and signature-graphic uploads
 - domain onboarding with generated `MX`, `SPF`, `DKIM`, and `DMARC`
 - DNS verification and domain deliverability management
+- DKIM key rotation per domain
 - mailbox provisioning into Apache James
 - encrypted mailbox credential storage
 - outbound send flow through pluggable SMTP-style transport
+- outbound DKIM signing at the transport layer
+- CID-embedded signature logos (bypass external image blocking in Gmail/Outlook)
 - inbound sync through pluggable IMAP-style transport
-- product-owned threads, messages, and drafts
+- attachment handling for inbound and outbound messages
+- product-owned threads, messages, drafts, and approval records
+- reply-to-thread shorthand with full thread context
+- mark-message-read tracking
+- approval queue for agent outbound — agents in approval mode queue drafts for human review before send
+- full approval queue management endpoints (list, review, edit, approve, reject)
+- webhooks — register HTTP endpoints to receive events on mail activity
 - background sync worker and manual sync controls
 - a built-in operator console served from `/`
 - Linux deployment artifacts for `Cosmic Mail + Postgres + Apache James`
@@ -40,7 +50,6 @@ What is not finished:
 
 - real external inbox-placement validation with Gmail / Outlook / enterprise providers
 - final TLS / HTTPS production setup with a real domain
-- outbound DKIM signing integration on the transport path
 - bounce / complaint ingestion
 - alias and forwarding controls
 - abuse controls, quotas, and rate shaping for hostile multi-tenant use
@@ -65,6 +74,8 @@ Cosmic Mail should let a developer or operator do the following without touching
 8. send and receive email through those inboxes
 9. inspect threads and messages through a product-owned API
 10. manage access and sync behavior safely
+11. put agents into approval mode so human operators can review outbound before delivery
+12. register webhooks to push mail events into external systems
 
 This is why the project keeps its own domain model instead of exposing Apache James directly.
 
@@ -81,6 +92,9 @@ The current product model is:
 - `MailThread`
 - `MailMessage`
 - `MailDraft`
+- `MailAttachment`
+- `OutboundApproval`
+- `Webhook`
 
 Important relationship summary:
 
@@ -91,6 +105,9 @@ Important relationship summary:
 - one inbox can be linked to many agents
 - one inbox owns many threads
 - one thread owns many messages
+- one message owns many attachments
+- one draft in approval mode produces one `OutboundApproval` record
+- one organization owns many webhooks
 
 ## Architecture
 
@@ -133,7 +150,7 @@ Key directories:
 - `cosmic_mail/domain`
   - SQLAlchemy models, repositories, Pydantic schemas, validation
 - `cosmic_mail/services`
-  - business logic for organizations, agents, domains, inboxes, conversations, transport, and sync
+  - business logic for organizations, agents, domains, inboxes, conversations, transport, sync, and webhooks
 - `cosmic_mail/web/static`
   - operator console frontend
 - `infra/docker-compose.production.yml`
@@ -174,13 +191,36 @@ Key directories:
 - set prompt, signature, persona, title, and default domain
 - link one or more inboxes to the agent
 - mark a primary inbox when needed
+- optionally upload an agent avatar and a signature graphic
+- optionally enable `approval_required` to queue all outbound for human review
 
 ### 5. Mail Flow
 
 - create a draft
 - send the draft through the configured outbound transport
+- outbound is DKIM-signed per the sending domain's key material
+- signature logos are embedded as CID inline images (bypass external image blocking)
 - sync inbound mail through IMAP
 - normalize inbound and outbound mail into product-owned threads and messages
+- attachments are extracted and stored against each message
+
+### 6. Approval Queue
+
+- agent is configured with `approval_required: true`
+- all draft sends for that agent are intercepted before transport
+- draft status moves to `pending_approval`
+- an `OutboundApproval` record is created
+- human operator inspects and optionally edits subject, body, and recipients
+- operator approves → draft is sent immediately via the normal outbound flow
+- operator rejects → draft reverts to editable `draft` state with an optional reviewer note
+- the approval queue is surfaced in the operator console with filter tabs and a detail pane
+
+### 7. Webhooks
+
+- operator registers webhook endpoints per organization
+- events are fired after inbound sync or outbound send
+- payload includes thread and message context
+- each webhook call includes a signature header for request verification
 
 ## API Surface
 
@@ -217,6 +257,10 @@ Current API groups:
 - `PATCH /v1/agents/{agent_id}`
 - `POST /v1/agents/{agent_id}/mailboxes`
 - `DELETE /v1/agents/{agent_id}/mailboxes/{mailbox_id}`
+- `POST /v1/agents/{agent_id}/avatar` — upload avatar image
+- `GET /v1/agents/{agent_id}/avatar` — serve avatar image
+- `POST /v1/agents/{agent_id}/signature-graphic` — upload signature logo
+- `GET /v1/agents/{agent_id}/signature-graphic` — serve signature logo
 
 ### Mailboxes
 
@@ -230,9 +274,33 @@ Current API groups:
 
 - `POST /v1/drafts`
 - `GET /v1/drafts`
-- `POST /v1/drafts/{draft_id}/send`
+- `POST /v1/drafts/{draft_id}/send` — returns `queued_for_approval: true` when agent is in approval mode
 - `GET /v1/threads`
+- `GET /v1/threads/{thread_id}`
 - `GET /v1/threads/{thread_id}/messages`
+- `POST /v1/threads/{thread_id}/reply` — reply shorthand with full thread context
+- `PATCH /v1/threads/{thread_id}/messages/{message_id}/read` — mark message read
+
+### Attachments
+
+- `GET /v1/messages/{message_id}/attachments` — list attachments for a message
+- `GET /v1/attachments/{attachment_id}/content` — download attachment content
+
+### Approval Queue
+
+- `GET /v1/approvals` — list with `status`, `agent_id`, `mailbox_id` filters
+- `GET /v1/approvals/{approval_id}` — get single approval with full draft embedded
+- `PATCH /v1/approvals/{approval_id}` — edit subject, body, or recipients before sending
+- `POST /v1/approvals/{approval_id}/approve` — approve and immediately send
+- `POST /v1/approvals/{approval_id}/reject` — reject with optional reviewer note
+
+### Webhooks
+
+- `POST /v1/webhooks` — register a new webhook endpoint
+- `GET /v1/webhooks` — list registered webhooks
+- `GET /v1/webhooks/{webhook_id}` — get single webhook
+- `PATCH /v1/webhooks/{webhook_id}` — update endpoint URL or enabled state
+- `DELETE /v1/webhooks/{webhook_id}` — remove a webhook
 
 ### System
 
@@ -256,7 +324,16 @@ Current sections:
 - `Domains`
 - `Inboxes`
 - `Conversations`
+- `Approvals` — approval queue with filter tabs (Pending / Approved / Rejected / All) and split-pane detail view
+- `Webhooks`
 - `Access`
+
+Agent features in the console:
+
+- create and edit agents with approval mode toggle
+- upload avatar and signature graphic
+- "approval mode" badge shown in agents table when `approval_required` is set
+- orange pending badge on Approvals nav item when there are pending approvals
 
 Frontend files:
 
@@ -316,6 +393,7 @@ That lets you work on the control plane without a live James instance.
 - `COSMIC_MAIL_SYNC_WORKER_ENABLED`
 - `COSMIC_MAIL_SYNC_WORKER_INTERVAL_SECONDS`
 - `COSMIC_MAIL_SYNC_WORKER_BATCH_SIZE`
+- `COSMIC_MAIL_STORAGE_PATH` — base path for avatar and signature-graphic uploads
 
 ## Production Deployment
 
@@ -385,7 +463,6 @@ These are the biggest known gaps between the current checkpoint and a true publi
 - real external deliverability validation
 - DNS automation and production onboarding UX
 - bounce and complaint handling
-- outbound DKIM signing at the transport layer
 - aliases and forwarding
 - abuse detection and rate control
 - richer search and operator analytics
@@ -419,9 +496,9 @@ That sequence gives you the fastest path to understanding the system without get
 
 ## Near-Term Roadmap
 
-- stabilize the operator console and keep it intentionally simple
 - validate full external send / receive with a real domain
-- finish DKIM signing integration
 - add alias and forwarding support
-- add inbound eventing beyond polling
+- add inbound eventing beyond polling (IMAP IDLE or webhook bridge)
 - add stronger tenant safety and abuse controls
+- bounce and complaint ingestion
+- richer operator analytics and search
