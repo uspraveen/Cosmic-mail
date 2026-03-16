@@ -11,6 +11,7 @@ from cosmic_mail.core.config import Settings
 from cosmic_mail.domain.repositories import AttachmentRepository
 from cosmic_mail.domain.schemas import AttachmentRead, MailDraftCreate, MailDraftRead, MailDraftSendResult, MailMessageRead, MailThreadRead
 from cosmic_mail.services.conversations import (
+    ApprovalNotFoundError,
     ConversationService,
     DraftNotFoundError,
     DraftStateError,
@@ -88,7 +89,7 @@ def send_draft(
     authorize_draft(session, auth, draft_id)
     service = ConversationService(session, settings, outbound_sender, inbound_client)
     try:
-        draft, thread, message = service.send_draft(draft_id)
+        draft, thread, message, approval = service.send_draft(draft_id)
     except (DraftNotFoundError, ThreadNotFoundError, MailboxNotFoundError) as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except DraftThreadMismatchError as exc:
@@ -98,6 +99,12 @@ def send_draft(
     except (MailTransportError, MailboxCredentialsError) as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
+    if approval is not None:
+        return MailDraftSendResult(
+            draft=MailDraftRead.model_validate(draft),
+            queued_for_approval=True,
+            approval_id=approval.id,
+        )
     return MailDraftSendResult(
         draft=MailDraftRead.model_validate(draft),
         thread=MailThreadRead.model_validate(thread),

@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from cosmic_mail.domain.models import AgentStatus, DomainStatus, DraftStatus, MailboxStatus, MessageDirection, WebhookEventType
+from cosmic_mail.domain.models import AgentStatus, ApprovalStatus, DomainStatus, DraftStatus, MailboxStatus, MessageDirection, WebhookEventType
 
 
 class OrganizationCreate(BaseModel):
@@ -176,6 +176,7 @@ class AgentCreate(BaseModel):
     accent_color: str | None = Field(default=None, max_length=24)
     avatar_url: str | None = Field(default=None, max_length=512)
     signature_graphic_url: str | None = Field(default=None, max_length=512)
+    approval_required: bool = False
 
 
 class AgentUpdate(BaseModel):
@@ -189,6 +190,7 @@ class AgentUpdate(BaseModel):
     accent_color: str | None = Field(default=None, max_length=24)
     avatar_url: str | None = Field(default=None, max_length=512)
     signature_graphic_url: str | None = Field(default=None, max_length=512)
+    approval_required: bool | None = None
     status: AgentStatus | None = None
 
 
@@ -225,6 +227,7 @@ class AgentRead(BaseModel):
     accent_color: str
     avatar_url: str | None
     signature_graphic_url: str | None
+    approval_required: bool
     status: AgentStatus
     created_at: datetime
     updated_at: datetime
@@ -348,8 +351,37 @@ class WebhookRead(BaseModel):
 
 class MailDraftSendResult(BaseModel):
     draft: MailDraftRead
-    thread: MailThreadRead
-    message: MailMessageRead
+    thread: MailThreadRead | None = None
+    message: MailMessageRead | None = None
+    queued_for_approval: bool = False
+    approval_id: str | None = None
+
+
+class OutboundApprovalRead(BaseModel):
+    id: str
+    organization_id: str
+    agent_id: str | None
+    agent_name: str | None
+    mailbox_id: str
+    mailbox_address: str
+    draft_id: str | None
+    draft: MailDraftRead | None
+    status: ApprovalStatus
+    reviewer_note: str | None
+    created_at: datetime
+    reviewed_at: datetime | None
+
+
+class ApprovalRejectBody(BaseModel):
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class ApprovalDraftEdit(BaseModel):
+    subject: str | None = Field(default=None, max_length=998)
+    text_body: str | None = None
+    html_body: str | None = None
+    to_recipients: list[MailContact] | None = None
+    cc_recipients: list[MailContact] | None = None
 
 
 class MailboxSyncResult(BaseModel):

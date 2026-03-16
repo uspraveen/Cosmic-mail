@@ -106,6 +106,20 @@ export const api = {
   },
   deleteAttachment: (id) => request(`/v1/attachments/${id}`, { method: "DELETE" }),
 
+  // Approvals
+  listApprovals:      (params = {}) => {
+    const qs = new URLSearchParams();
+    if (params.status)    qs.set("status", params.status);
+    if (params.agentId)   qs.set("agent_id", params.agentId);
+    if (params.mailboxId) qs.set("mailbox_id", params.mailboxId);
+    const q = qs.toString();
+    return request(`/v1/approvals${q ? "?" + q : ""}`);
+  },
+  getApproval:        (id) => request(`/v1/approvals/${id}`),
+  editApprovalDraft:  (id, body) => request(`/v1/approvals/${id}`, { method: "PATCH", body }),
+  approveOutbound:    (id) => request(`/v1/approvals/${id}/approve`, { method: "POST" }),
+  rejectOutbound:     (id, body = {}) => request(`/v1/approvals/${id}/reject`, { method: "POST", body }),
+
   // Webhooks
   listWebhooks:       () => request("/v1/webhooks"),
   createWebhook:      (body) => request("/v1/webhooks", { method: "POST", body }),

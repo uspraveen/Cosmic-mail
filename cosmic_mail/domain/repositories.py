@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from cosmic_mail.domain.models import (
     AgentMailboxLink,
     AgentProfile,
+    ApprovalStatus,
     Domain,
     MailAttachment,
     MailDraft,
@@ -15,6 +16,7 @@ from cosmic_mail.domain.models import (
     MailboxStatus,
     Organization,
     OrganizationApiKey,
+    OutboundApproval,
     Webhook,
 )
 
@@ -352,3 +354,44 @@ class WebhookRepository:
 
     def delete(self, webhook: Webhook) -> None:
         self.session.delete(webhook)
+
+
+class OutboundApprovalRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def add(self, approval: OutboundApproval) -> OutboundApproval:
+        self.session.add(approval)
+        self.session.flush()
+        return approval
+
+    def get(self, approval_id: str) -> OutboundApproval | None:
+        return self.session.get(OutboundApproval, approval_id)
+
+    def get_pending_for_draft(self, draft_id: str) -> OutboundApproval | None:
+        query = select(OutboundApproval).where(
+            OutboundApproval.draft_id == draft_id,
+            OutboundApproval.status == ApprovalStatus.pending.value,
+        )
+        return self.session.scalar(query)
+
+    def list_for_organization(
+        self,
+        organization_id: str,
+        *,
+        status: str | None = None,
+        agent_id: str | None = None,
+        mailbox_id: str | None = None,
+    ) -> list[OutboundApproval]:
+        query = (
+            select(OutboundApproval)
+            .where(OutboundApproval.organization_id == organization_id)
+            .order_by(OutboundApproval.created_at.desc())
+        )
+        if status is not None:
+            query = query.where(OutboundApproval.status == status)
+        if agent_id is not None:
+            query = query.where(OutboundApproval.agent_id == agent_id)
+        if mailbox_id is not None:
+            query = query.where(OutboundApproval.mailbox_id == mailbox_id)
+        return list(self.session.scalars(query))

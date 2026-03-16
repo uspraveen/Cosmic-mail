@@ -7,14 +7,16 @@ from cosmic_mail.core.security import SecretBox
 from cosmic_mail.domain.models import (
     AgentMailboxLink,
     AgentProfile,
+    ApprovalStatus,
     DraftStatus,
     MailDraft,
     MailMessage,
     MailThread,
     MailboxIdentity,
     MessageDirection,
+    OutboundApproval,
 )
-from cosmic_mail.domain.repositories import AgentMailboxLinkRepository, AgentRepository, AttachmentRepository, DomainRepository, DraftRepository, MailboxRepository, MessageRepository, ThreadRepository
+from cosmic_mail.domain.repositories import AgentMailboxLinkRepository, AgentRepository, AttachmentRepository, DomainRepository, DraftRepository, MailboxRepository, MessageRepository, OutboundApprovalRepository, ThreadRepository
 from cosmic_mail.domain.schemas import MailDraftCreate, MailboxSyncResult, ThreadReplyCreate
 from cosmic_mail.services.inbound import InboundMailboxClient, InboundMessageEnvelope
 from cosmic_mail.services.attachments import AttachmentService, AttachmentTooLargeError
@@ -49,6 +51,14 @@ class DraftThreadMismatchError(ValueError):
     pass
 
 
+class ApprovalNotFoundError(ValueError):
+    pass
+
+
+class ApprovalStateError(ValueError):
+    pass
+
+
 class MailTransportError(RuntimeError):
     pass
 
@@ -75,6 +85,7 @@ class ConversationService:
         self._attachments = AttachmentRepository(session)
         self._agents = AgentRepository(session)
         self._agent_mailbox_links = AgentMailboxLinkRepository(session)
+        self._approvals = OutboundApprovalRepository(session)
         self._outbound_sender = outbound_sender
         self._inbound_client = inbound_client
         self._secret_box = SecretBox(settings.secret_key)
@@ -109,16 +120,117 @@ class ConversationService:
         self._require_mailbox(mailbox_id)
         return self._drafts.list_for_mailbox(mailbox_id)
 
-    def send_draft(self, draft_id: str) -> tuple[MailDraft, MailThread, MailMessage]:
+    def send_draft(
+        self, draft_id: str
+    ) -> tuple[MailDraft, MailThread | None, MailMessage | None, OutboundApproval | None]:
         draft = self._require_draft(draft_id)
         if draft.status == DraftStatus.sent.value:
             raise DraftStateError("draft has already been sent")
+        if draft.status == DraftStatus.pending_approval.value:
+            raise DraftStateError("draft is already awaiting approval")
 
         mailbox = self._require_mailbox(draft.mailbox_id)
+        agent = self._resolve_agent_for_mailbox(mailbox.id)
+
+        if agent and agent.approval_required:
+            draft.status = DraftStatus.pending_approval.value
+            approval = OutboundApproval(
+                organization_id=draft.organization_id,
+                agent_id=agent.id,
+                mailbox_id=mailbox.id,
+                draft_id=draft.id,
+                status=ApprovalStatus.pending.value,
+            )
+            self._approvals.add(approval)
+            self._session.add(draft)
+            self._session.commit()
+            self._session.refresh(draft)
+            self._session.refresh(approval)
+            return draft, None, None, approval
+
+        draft, thread, message = self._execute_send(draft, mailbox, agent)
+        return draft, thread, message, None
+
+    def approve_outbound(
+        self, approval_id: str
+    ) -> tuple[OutboundApproval, MailDraft, MailThread, MailMessage]:
+        approval = self._require_approval(approval_id)
+        if approval.status != ApprovalStatus.pending.value:
+            raise ApprovalStateError("approval is not in pending state")
+
+        draft = self._require_draft(approval.draft_id)
+        mailbox = self._require_mailbox(draft.mailbox_id)
+        agent = self._resolve_agent_for_mailbox(mailbox.id)
+
+        # Reset to draft so _execute_send can proceed
+        draft.status = DraftStatus.draft.value
+        draft, thread, message = self._execute_send(draft, mailbox, agent)
+
+        approval.status = ApprovalStatus.approved.value
+        approval.reviewed_at = utcnow()
+        self._session.add(approval)
+        self._session.commit()
+        self._session.refresh(approval)
+        return approval, draft, thread, message
+
+    def reject_outbound(
+        self, approval_id: str, note: str | None = None
+    ) -> tuple[OutboundApproval, MailDraft]:
+        approval = self._require_approval(approval_id)
+        if approval.status != ApprovalStatus.pending.value:
+            raise ApprovalStateError("approval is not in pending state")
+
+        draft = self._require_draft(approval.draft_id)
+
+        approval.status = ApprovalStatus.rejected.value
+        approval.reviewed_at = utcnow()
+        approval.reviewer_note = note
+        draft.status = DraftStatus.draft.value
+
+        self._session.add_all([approval, draft])
+        self._session.commit()
+        self._session.refresh(approval)
+        self._session.refresh(draft)
+        return approval, draft
+
+    def edit_approval_draft(
+        self,
+        approval_id: str,
+        *,
+        subject: str | None = None,
+        text_body: str | None = None,
+        html_body: str | None = None,
+        to_recipients: list[dict] | None = None,
+        cc_recipients: list[dict] | None = None,
+    ) -> tuple[OutboundApproval, MailDraft]:
+        approval = self._require_approval(approval_id)
+        if approval.status != ApprovalStatus.pending.value:
+            raise ApprovalStateError("can only edit a pending approval")
+
+        draft = self._require_draft(approval.draft_id)
+        if subject is not None:
+            draft.subject = subject.strip()
+        if text_body is not None:
+            draft.text_body = text_body
+        if html_body is not None:
+            draft.html_body = html_body
+        if to_recipients is not None:
+            draft.to_recipients = normalize_contacts(to_recipients)
+        if cc_recipients is not None:
+            draft.cc_recipients = normalize_contacts(cc_recipients)
+
+        self._session.add(draft)
+        self._session.commit()
+        self._session.refresh(approval)
+        self._session.refresh(draft)
+        return approval, draft
+
+    def _execute_send(
+        self, draft: MailDraft, mailbox: MailboxIdentity, agent: AgentProfile | None
+    ) -> tuple[MailDraft, MailThread, MailMessage]:
         password = self._decrypt_mailbox_password(mailbox)
         dkim_private_key_pem, dkim_selector, dkim_domain = self._resolve_dkim(mailbox.domain_id)
         outbound_attachments = self._load_draft_attachments(draft.id)
-        agent = self._resolve_agent_for_mailbox(mailbox.id)
         reply_message = None
         if draft.reply_to_message_id:
             reply_message = self._messages.get_by_mailbox_and_internet_id(mailbox.id, draft.reply_to_message_id)
@@ -222,7 +334,9 @@ class ConversationService:
         self._session.refresh(message)
         return draft, thread, message
 
-    def reply_to_thread(self, thread_id: str, payload: ThreadReplyCreate) -> tuple[MailDraft, MailThread, MailMessage]:
+    def reply_to_thread(
+        self, thread_id: str, payload: ThreadReplyCreate
+    ) -> tuple[MailDraft, MailThread | None, MailMessage | None, OutboundApproval | None]:
         thread = self._threads.get(thread_id)
         if thread is None:
             raise ThreadNotFoundError("thread not found")
@@ -378,11 +492,19 @@ class ConversationService:
             raise MailboxNotFoundError("mailbox not found")
         return mailbox
 
-    def _require_draft(self, draft_id: str) -> MailDraft:
+    def _require_draft(self, draft_id: str | None) -> MailDraft:
+        if draft_id is None:
+            raise DraftNotFoundError("draft not found")
         draft = self._drafts.get(draft_id)
         if draft is None:
             raise DraftNotFoundError("draft not found")
         return draft
+
+    def _require_approval(self, approval_id: str) -> OutboundApproval:
+        approval = self._approvals.get(approval_id)
+        if approval is None:
+            raise ApprovalNotFoundError("approval not found")
+        return approval
 
     def _decrypt_mailbox_password(self, mailbox: MailboxIdentity) -> str:
         if not mailbox.password_ciphertext:

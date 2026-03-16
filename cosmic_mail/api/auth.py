@@ -7,13 +7,14 @@ from sqlalchemy.orm import Session
 
 from cosmic_mail.core.config import Settings
 from cosmic_mail.core.security import compare_secret
-from cosmic_mail.domain.models import AgentProfile, Domain, MailDraft, MailThread, MailboxIdentity, Organization, OrganizationApiKey
+from cosmic_mail.domain.models import AgentProfile, Domain, MailDraft, MailThread, MailboxIdentity, Organization, OrganizationApiKey, OutboundApproval
 from cosmic_mail.domain.repositories import (
     AgentRepository,
     DomainRepository,
     DraftRepository,
     MailboxRepository,
     OrganizationRepository,
+    OutboundApprovalRepository,
     ThreadRepository,
 )
 from cosmic_mail.services.api_keys import OrganizationApiKeyService
@@ -137,6 +138,18 @@ def authorize_draft(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="draft not found")
     authorize_organization_access(auth, draft.organization_id)
     return draft
+
+
+def authorize_approval(
+    session: Session,
+    auth: AuthContext,
+    approval_id: str,
+) -> OutboundApproval:
+    approval = OutboundApprovalRepository(session).get(approval_id)
+    if approval is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="approval not found")
+    authorize_organization_access(auth, approval.organization_id)
+    return approval
 
 
 def _extract_api_key(request: Request) -> str | None:

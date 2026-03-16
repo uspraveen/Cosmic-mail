@@ -90,6 +90,7 @@ class AgentService:
             accent_color=accent_color,
             avatar_url=payload.avatar_url.strip() if payload.avatar_url else None,
             signature_graphic_url=payload.signature_graphic_url.strip() if payload.signature_graphic_url else None,
+            approval_required=payload.approval_required,
             status=AgentStatus.active.value,
         )
         try:
@@ -141,6 +142,8 @@ class AgentService:
             agent.avatar_url = payload.avatar_url.strip() if payload.avatar_url else None
         if "signature_graphic_url" in updates:
             agent.signature_graphic_url = payload.signature_graphic_url.strip() if payload.signature_graphic_url else None
+        if "approval_required" in updates and payload.approval_required is not None:
+            agent.approval_required = payload.approval_required
         if "status" in updates and payload.status is not None:
             agent.status = payload.status.value
         if "default_domain_id" in updates:

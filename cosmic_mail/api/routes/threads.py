@@ -82,11 +82,17 @@ def reply_to_thread(
     authorize_thread(session, auth, thread_id)
     service = ConversationService(session, settings, outbound_sender, inbound_client)
     try:
-        draft, thread, message = service.reply_to_thread(thread_id, payload)
+        draft, thread, message, approval = service.reply_to_thread(thread_id, payload)
     except (ThreadNotFoundError, MailboxNotFoundError) as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except MailTransportError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    if approval is not None:
+        return MailDraftSendResult(
+            draft=MailDraftRead.model_validate(draft),
+            queued_for_approval=True,
+            approval_id=approval.id,
+        )
     return MailDraftSendResult(
         draft=MailDraftRead.model_validate(draft),
         thread=MailThreadRead.model_validate(thread),
