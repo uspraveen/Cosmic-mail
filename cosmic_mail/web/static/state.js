@@ -24,6 +24,11 @@ export const state = {
   selectedDomainId: null,
   domainDeliverability: null,
 
+  // Approvals
+  approvals: [],
+  selectedApprovalId: null,
+  approvalsFilter: "pending",
+
   // Ephemeral display state
   issuedCredential: null,   // { address, password } shown once after inbox creation
   createdApiKey: null,       // { api_key, plaintext_key } shown once
@@ -55,6 +60,9 @@ export function clearWorkspaceState() {
   state.selectedThreadId = null;
   state.selectedDomainId = null;
   state.domainDeliverability = null;
+  state.approvals = [];
+  state.selectedApprovalId = null;
+  state.approvalsFilter = "pending";
   state.issuedCredential = null;
   state.createdApiKey = null;
 }

@@ -63,6 +63,11 @@
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
           Conversations
         </div>
+        <div class="nav-item" data-view="approvals">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          Approvals
+          <span class="nav-badge" id="nav-badge-approvals" style="display:none">0</span>
+        </div>
       </div>
 
       <div class="nav-section">
@@ -235,6 +240,21 @@
             </div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- ── Approvals ─────────────────────────────────────────────────────── -->
+    <div class="view-panel panel-flush" data-view-panel="approvals">
+      <div class="page-header" style="padding:1.25rem 1.5rem 1rem;border-bottom:1px solid var(--border-1)">
+        <div class="page-title">Approval Queue</div>
+        <div class="page-desc">Review outbound emails before they're sent by agents in approval mode.</div>
+      </div>
+      <div style="display:flex;height:calc(100% - 73px);overflow:hidden">
+        <div style="width:340px;min-width:280px;border-right:1px solid var(--border-1);display:flex;flex-direction:column;overflow:hidden">
+          <div id="approvals-filter-bar" style="display:flex;gap:4px;padding:10px 12px;border-bottom:1px solid var(--border-1);flex-shrink:0"></div>
+          <div id="approvals-list" style="overflow-y:auto;flex:1"></div>
+        </div>
+        <div id="approvals-detail-pane" style="flex:1;overflow-y:auto"></div>
       </div>
     </div>
 

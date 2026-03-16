@@ -11,6 +11,8 @@ import {
   renderThreadList, renderMessagePane, renderComposeModal,
   renderWebhooksTable, renderApiKeys, renderApiKeyBanner,
   renderSyncWorker, renderNewApiKeyModal,
+  renderApprovalsFilterBar, renderApprovalsList, renderApprovalDetail,
+  renderApprovalEditModal, renderRejectModal,
 } from "./templates.js";
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
@@ -142,6 +144,7 @@ async function loadWorkspace() {
     await Promise.all([
       loadSettingsState(),
       loadWebhooks(),
+      loadApprovals(),
       loadConversationState(),
       state.selectedDomainId ? loadDomainDetail() : Promise.resolve(),
     ]);
@@ -164,6 +167,10 @@ async function loadSettingsState() {
 
 async function loadWebhooks() {
   try { state.webhooks = await api.listWebhooks(); } catch { state.webhooks = []; }
+}
+
+async function loadApprovals() {
+  try { state.approvals = await api.listApprovals(); } catch { state.approvals = []; }
 }
 
 async function loadDomainDetail() {
@@ -212,13 +219,24 @@ function renderAll() {
     el.classList.toggle("active", el.dataset.viewPanel === state.activeView);
   });
 
-  const title = { overview:"Overview", agents:"Agents", inboxes:"Inboxes", conversations:"Conversations", domains:"Domains", webhooks:"Webhooks", settings:"Settings" };
+  const title = { overview:"Overview", agents:"Agents", inboxes:"Inboxes", conversations:"Conversations", approvals:"Approval Queue", domains:"Domains", webhooks:"Webhooks", settings:"Settings" };
   document.getElementById("topbar-title").textContent = title[state.activeView] || "Console";
+
+  // Pending approvals badge
+  const pendingCount = state.approvals.filter(a => a.status === "pending").length;
+  const approvalBadge = document.getElementById("nav-badge-approvals");
+  if (approvalBadge) {
+    approvalBadge.textContent = pendingCount;
+    approvalBadge.style.display = pendingCount > 0 ? "" : "none";
+    approvalBadge.style.background = "var(--orange)";
+    approvalBadge.style.color = "#000";
+  }
 
   renderOverviewPanel();
   renderAgentsPanel();
   renderInboxesPanel();
   renderConversationsPanel();
+  renderApprovalsViewPanel();
   renderDomainsPanel();
   renderWebhooksPanel();
   renderSettingsPanel();
@@ -364,6 +382,18 @@ function renderWebhooksPanel() {
   if (el) el.innerHTML = renderWebhooksTable(state.webhooks);
 }
 
+function renderApprovalsViewPanel() {
+  const filterBar = document.getElementById("approvals-filter-bar");
+  const list = document.getElementById("approvals-list");
+  const detail = document.getElementById("approvals-detail-pane");
+  if (!filterBar || !list || !detail) return;
+
+  filterBar.innerHTML = renderApprovalsFilterBar(state.approvals, state.approvalsFilter);
+  list.innerHTML = renderApprovalsList(state.approvals, state.selectedApprovalId, state.approvalsFilter);
+  const selected = state.approvals.find(a => a.id === state.selectedApprovalId) || null;
+  detail.innerHTML = renderApprovalDetail(selected);
+}
+
 function renderSettingsPanel() {
   const keysEl = document.getElementById("api-keys-container");
   if (keysEl) keysEl.innerHTML = renderApiKeys(state.apiKeys);
@@ -430,6 +460,18 @@ async function handleMainClick(e) {
     case "revoke-api-key":     await handleRevokeApiKey(el.dataset.keyId); break;
     case "modal-unlink-inbox": await handleModalUnlinkInbox(el.dataset.agentId, el.dataset.mailboxId); break;
     case "open-reply":         document.getElementById("reply-panel").style.display = ""; break;
+    case "select-approval":
+      state.selectedApprovalId = el.dataset.approvalId;
+      renderApprovalsViewPanel();
+      break;
+    case "set-approvals-filter":
+      state.approvalsFilter = el.dataset.filter;
+      state.selectedApprovalId = null;
+      renderApprovalsViewPanel();
+      break;
+    case "approve-approval":   await handleApproveApproval(el.dataset.approvalId); break;
+    case "reject-approval":    handleRejectApproval(el.dataset.approvalId); break;
+    case "edit-approval":      handleEditApproval(el.dataset.approvalId); break;
   }
 }
 
@@ -555,11 +597,12 @@ async function submitAgentModal(agentId) {
     title:           document.getElementById("modal-agent-title").value.trim() || null,
     slug:            document.getElementById("modal-agent-slug").value.trim() || null,
     default_domain_id: document.getElementById("modal-agent-domain").value || null,
-    persona_summary: document.getElementById("modal-agent-persona").value.trim() || null,
-    system_prompt:   document.getElementById("modal-agent-prompt").value.trim() || null,
-    signature:       document.getElementById("modal-agent-signature").value.trim() || null,
-    accent_color:    document.getElementById("modal-agent-color").value || "#f97316",
-    avatar_url:      document.getElementById("modal-agent-avatar")?.value.trim() || null,
+    persona_summary:    document.getElementById("modal-agent-persona").value.trim() || null,
+    system_prompt:      document.getElementById("modal-agent-prompt").value.trim() || null,
+    signature:          document.getElementById("modal-agent-signature").value.trim() || null,
+    accent_color:       document.getElementById("modal-agent-color").value || "#f97316",
+    avatar_url:         document.getElementById("modal-agent-avatar")?.value.trim() || null,
+    approval_required:  document.getElementById("modal-agent-approval-required")?.checked || false,
   };
   if (!payload.name) { toast("Name is required.", "error"); return; }
   try {
@@ -815,6 +858,70 @@ async function handleSendReply(e) {
     renderAll();
     toast("Reply sent.", "success");
   } catch (err) { toast(err.message, "error"); }
+}
+
+// ── Approvals ─────────────────────────────────────────────────────────────────
+
+async function handleApproveApproval(approvalId) {
+  try {
+    await api.approveOutbound(approvalId);
+    toast("Email approved and sent.", "success");
+    await loadApprovals();
+    // Refresh the selected approval with updated data
+    state.selectedApprovalId = approvalId;
+    renderApprovalsViewPanel();
+  } catch (err) { toast(err.message, "error"); }
+}
+
+function handleRejectApproval(approvalId) {
+  openModal("Reject email", renderRejectModal(), [
+    { label: "Reject", cls: "btn-danger", id: "modal-submit" },
+    { label: "Cancel", cls: "btn-ghost", id: "modal-cancel" },
+  ]);
+  document.getElementById("modal-submit").addEventListener("click", async () => {
+    const note = document.getElementById("reject-note-input")?.value.trim() || null;
+    try {
+      await api.rejectOutbound(approvalId, { note });
+      closeModal();
+      toast("Email rejected.", "success");
+      await loadApprovals();
+      state.selectedApprovalId = approvalId;
+      renderApprovalsViewPanel();
+    } catch (err) { toast(err.message, "error"); }
+  });
+  document.getElementById("modal-cancel").addEventListener("click", closeModal);
+}
+
+function handleEditApproval(approvalId) {
+  const approval = state.approvals.find(a => a.id === approvalId);
+  if (!approval) return;
+  openModal("Edit draft", renderApprovalEditModal(approval), [
+    { label: "Save changes", cls: "btn-primary", id: "modal-submit" },
+    { label: "Cancel", cls: "btn-ghost", id: "modal-cancel" },
+  ]);
+  document.getElementById("modal-submit").addEventListener("click", async () => {
+    const subject = document.getElementById("approval-edit-subject")?.value.trim() || null;
+    const body = document.getElementById("approval-edit-body")?.value || null;
+    const toRaw = document.getElementById("approval-edit-to")?.value || "";
+    const ccRaw = document.getElementById("approval-edit-cc")?.value || "";
+    const toRecipients = toRaw.split(",").map(e => e.trim()).filter(Boolean).map(e => ({ email: e }));
+    const ccRecipients = ccRaw.split(",").map(e => e.trim()).filter(Boolean).map(e => ({ email: e }));
+    const isHtml = approval.draft?.html_body && !approval.draft?.text_body;
+    try {
+      await api.editApprovalDraft(approvalId, {
+        subject,
+        [isHtml ? "html_body" : "text_body"]: body,
+        to_recipients: toRecipients.length ? toRecipients : undefined,
+        cc_recipients: ccRecipients.length ? ccRecipients : undefined,
+      });
+      closeModal();
+      toast("Draft updated.", "success");
+      await loadApprovals();
+      state.selectedApprovalId = approvalId;
+      renderApprovalsViewPanel();
+    } catch (err) { toast(err.message, "error"); }
+  });
+  document.getElementById("modal-cancel").addEventListener("click", closeModal);
 }
 
 // ── Webhooks ──────────────────────────────────────────────────────────────────

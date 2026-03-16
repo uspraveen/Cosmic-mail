@@ -164,7 +164,7 @@ export function renderAgentsTable(agents) {
           <div><strong>${esc(a.name)}</strong><div class="text-muted mt-4" style="font-size:11.5px">${esc(a.title || "Agent profile")}</div></div>
         </div></td>
         <td class="td-mono">${primary ? esc(primary.address) : '<span class="text-muted">No inbox</span>'}</td>
-        <td>${badge(a.status, a.status === "active" ? "green" : "muted")}</td>
+        <td><div style="display:flex;gap:4px;flex-wrap:wrap">${badge(a.status, a.status === "active" ? "green" : "muted")}${a.approval_required ? badge("approval mode","orange") : ""}</div></td>
         <td class="text-muted">${esc(a.default_domain_name || "—")}</td>
         <td class="td-actions"><div class="td-actions-inner">
           <button class="btn btn-ghost btn-xs" data-action="edit-agent" data-agent-id="${a.id}">Edit</button>
@@ -217,6 +217,12 @@ export function renderAgentModalBody(agent, domains) {
             </div>
           </div>
         </div>
+      </div>
+      <div class="field">
+        <label class="flex items-center gap-8" style="font-size:12.5px;cursor:pointer;user-select:none">
+          <input type="checkbox" id="modal-agent-approval-required" ${agent?.approval_required ? "checked" : ""}>
+          <span><strong>Require approval before sending</strong> — all outbound emails from this agent's inboxes will be queued for human review</span>
+        </label>
       </div>
       <div class="field"><label class="field-label">Signature graphic</label>
         <p class="field-hint" style="margin:0 0 8px;font-size:12px;color:var(--muted)">Logo shown in email signatures. Defaults to profile photo if not set.</p>
@@ -557,6 +563,145 @@ export function renderSyncWorker(status, isAdmin) {
       ${status.last_error ? `<div class="detail-row"><span class="detail-key">Error</span><span class="detail-val" style="color:var(--red);font-size:11.5px">${esc(status.last_error)}</span></div>` : ""}
     </div>
   `;
+}
+
+// ── Approval Queue ────────────────────────────────────────────────────────────
+
+function approvalStatusBadge(status) {
+  const colors = { pending: "orange", approved: "green", rejected: "red" };
+  return badge(status, colors[status] || "muted");
+}
+
+export function renderApprovalsFilterBar(approvals, activeFilter) {
+  const counts = { all: approvals.length, pending: 0, approved: 0, rejected: 0 };
+  approvals.forEach(a => { if (counts[a.status] !== undefined) counts[a.status]++; });
+  return ["pending", "approved", "rejected", "all"].map(f => `
+    <button class="btn btn-xs ${activeFilter === f ? "btn-secondary" : "btn-ghost"}" data-action="set-approvals-filter" data-filter="${f}" style="font-size:11.5px">
+      ${f.charAt(0).toUpperCase() + f.slice(1)}
+      <span style="margin-left:4px;opacity:0.7">${counts[f]}</span>
+    </button>
+  `).join("");
+}
+
+export function renderApprovalsList(approvals, selectedId, filter) {
+  const filtered = filter === "all" ? approvals : approvals.filter(a => a.status === filter);
+  if (!filtered.length) {
+    const msgs = { pending: "No emails awaiting approval.", approved: "No approved emails.", rejected: "No rejected emails.", all: "No approvals yet." };
+    return `<div style="padding:2rem 1rem;text-align:center;color:var(--text-3);font-size:12.5px">${msgs[filter] || "Nothing here."}</div>`;
+  }
+  return filtered.map(a => {
+    const isSelected = a.id === selectedId;
+    const draft = a.draft;
+    const toLine = (draft?.to_recipients || []).map(r => r.email).join(", ") || "—";
+    return `
+      <div data-action="select-approval" data-approval-id="${esc(a.id)}" style="padding:12px 14px;border-bottom:1px solid var(--border-1);cursor:pointer;background:${isSelected ? "var(--surface-2)" : "transparent"};border-left:3px solid ${isSelected ? "var(--orange)" : "transparent"}">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:4px">
+          <div style="font-size:12px;font-weight:600;color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${esc(draft?.subject || "(no subject)")}</div>
+          ${approvalStatusBadge(a.status)}
+        </div>
+        <div style="font-size:11.5px;color:var(--text-3);display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            <span style="color:var(--orange)">${esc(a.agent_name || "Agent")}</span>
+            · To: ${esc(toLine.length > 30 ? toLine.slice(0, 30) + "…" : toLine)}
+          </div>
+          <span style="flex-shrink:0">${fmtDate(a.created_at)}</span>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+export function renderApprovalDetail(approval) {
+  if (!approval) {
+    return `<div style="display:flex;height:100%;align-items:center;justify-content:center">
+      <div class="empty-state"><div class="empty-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>
+      <div class="empty-title">Select an item</div><div class="empty-desc">Choose an approval from the list to review.</div></div>
+    </div>`;
+  }
+
+  const draft = approval.draft;
+  const isPending = approval.status === "pending";
+  const toList = (draft?.to_recipients || []).map(r => r.name ? `${esc(r.name)} &lt;${esc(r.email)}&gt;` : esc(r.email)).join(", ") || "—";
+  const ccList = (draft?.cc_recipients || []).map(r => esc(r.email)).join(", ");
+  const body = draft?.text_body || draft?.html_body || "(empty)";
+  const isHtml = !draft?.text_body && draft?.html_body;
+
+  return `
+    <div style="padding:1.5rem;max-width:760px">
+      <div style="margin-bottom:1.25rem">
+        <div style="font-size:17px;font-weight:700;color:var(--text-1);margin-bottom:8px">${esc(draft?.subject || "(no subject)")}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--text-3);margin-bottom:6px">
+          <span>From <strong style="color:var(--text-2)">${esc(approval.mailbox_address)}</strong></span>
+          <span>·</span>
+          <span>Agent <strong style="color:var(--orange)">${esc(approval.agent_name || "—")}</strong></span>
+          <span>·</span>
+          <span>${fmtDateFull(approval.created_at)}</span>
+          <span>·</span>
+          <span>${approvalStatusBadge(approval.status)}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text-3);margin-bottom:4px">To: ${toList}</div>
+        ${ccList ? `<div style="font-size:12px;color:var(--text-3)">Cc: ${ccList}</div>` : ""}
+      </div>
+
+      ${isPending ? `
+      <div style="display:flex;gap:8px;margin-bottom:1.25rem;flex-wrap:wrap">
+        <button class="btn btn-primary btn-sm" data-action="approve-approval" data-approval-id="${esc(approval.id)}">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+          Approve &amp; Send
+        </button>
+        <button class="btn btn-secondary btn-sm" data-action="edit-approval" data-approval-id="${esc(approval.id)}">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          Edit draft
+        </button>
+        <button class="btn btn-danger btn-sm" data-action="reject-approval" data-approval-id="${esc(approval.id)}">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          Reject
+        </button>
+      </div>
+      ` : `
+      <div style="margin-bottom:1.25rem;padding:10px 14px;background:var(--surface-2);border-radius:6px;font-size:12.5px;color:var(--text-3)">
+        ${approval.status === "approved" ? `<span style="color:var(--green)">✓ Approved</span>` : `<span style="color:var(--red)">✕ Rejected</span>`}
+        ${approval.reviewed_at ? ` · ${fmtDateFull(approval.reviewed_at)}` : ""}
+        ${approval.reviewer_note ? `<div style="margin-top:6px;color:var(--text-2)">Note: ${esc(approval.reviewer_note)}</div>` : ""}
+      </div>
+      `}
+
+      <div style="border:1px solid var(--border-1);border-radius:8px;overflow:hidden">
+        <div style="padding:8px 12px;background:var(--surface-2);border-bottom:1px solid var(--border-1);font-size:11.5px;color:var(--text-3);font-weight:500">EMAIL BODY</div>
+        ${isHtml
+          ? `<div style="padding:1rem;background:var(--surface-1);max-height:480px;overflow:auto">${body}</div>`
+          : `<pre style="padding:1rem;margin:0;font-size:12.5px;line-height:1.6;color:var(--text-2);white-space:pre-wrap;word-break:break-word;max-height:480px;overflow:auto;background:var(--surface-1)">${esc(body)}</pre>`
+        }
+      </div>
+    </div>
+  `;
+}
+
+export function renderApprovalEditModal(approval) {
+  const draft = approval.draft;
+  const toVal = (draft?.to_recipients || []).map(r => r.email).join(", ");
+  const ccVal = (draft?.cc_recipients || []).map(r => r.email).join(", ");
+  return `<div class="form-grid">
+    <div class="field"><label class="field-label">Subject</label>
+      <input class="input" id="approval-edit-subject" value="${esc(draft?.subject || "")}"></div>
+    <div class="field"><label class="field-label">To</label>
+      <input class="input input-mono" id="approval-edit-to" value="${esc(toVal)}" placeholder="email@example.com">
+      <span class="field-hint">Comma-separated email addresses</span></div>
+    <div class="field"><label class="field-label">Cc <span class="text-muted">(optional)</span></label>
+      <input class="input input-mono" id="approval-edit-cc" value="${esc(ccVal)}" placeholder="cc@example.com"></div>
+    <div class="field"><label class="field-label">Body</label>
+      <textarea class="textarea" id="approval-edit-body" rows="9" style="font-family:monospace;font-size:12px">${esc(draft?.text_body || draft?.html_body || "")}</textarea>
+      <span class="field-hint">${draft?.html_body && !draft?.text_body ? "HTML body — edits will replace the HTML content." : "Plain text body."}</span>
+    </div>
+  </div>`;
+}
+
+export function renderRejectModal() {
+  return `<div class="field">
+    <label class="field-label">Rejection note <span class="text-muted">(optional)</span></label>
+    <textarea class="textarea" id="reject-note-input" rows="3" placeholder="Reason for rejection…"></textarea>
+    <span class="field-hint">This note is stored for audit purposes but not sent to anyone.</span>
+  </div>`;
 }
 
 // ── New API Key Modal ─────────────────────────────────────────────────────────
