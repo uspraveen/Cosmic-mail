@@ -446,9 +446,20 @@ function _updateAvatarPreview(url, name) {
   }
 }
 
+function _updateSigGraphicPreview(url) {
+  const container = document.getElementById("sig-graphic-preview");
+  if (!container) return;
+  if (url) {
+    container.innerHTML = `<img src="${url}" alt="Signature graphic" style="width:48px;height:48px;border-radius:8px;object-fit:cover">`;
+  } else {
+    container.innerHTML = `<div style="width:48px;height:48px;border-radius:8px;background:var(--surface-2);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted)">None</div>`;
+  }
+}
+
 function openAgentModal(agentId) {
   const agent = agentId ? state.agents.find(a => a.id === agentId) : null;
   window._pendingAvatarFile = null;
+  window._pendingSigGraphicFile = null;
   openModal(agent ? "Edit agent" : "New agent", renderAgentModalBody(agent, state.domains), [
     { label: agent ? "Save changes" : "Create agent", cls: "btn-primary", id: "modal-submit" },
     { label: "Cancel", cls: "btn-ghost", id: "modal-cancel" },
@@ -492,6 +503,47 @@ function openAgentModal(agentId) {
       if (uploadBtn) uploadBtn.textContent = "Upload photo";
     });
   }
+
+  // Signature graphic upload
+  const sigUploadBtn = document.getElementById("sig-graphic-upload-btn");
+  const sigFileInput = document.getElementById("modal-agent-sig-graphic-file");
+  const sigClearBtn  = document.getElementById("sig-graphic-clear-btn");
+  if (sigUploadBtn && sigFileInput) {
+    sigUploadBtn.addEventListener("click", () => sigFileInput.click());
+    sigFileInput.addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      if (agentId) {
+        const fd = new FormData();
+        fd.append("file", file);
+        try {
+          await api.uploadSignatureGraphic(agentId, fd);
+          const bust = `?t=${Date.now()}`;
+          _updateSigGraphicPreview(`/v1/agents/${agentId}/signature-graphic${bust}`);
+          sigUploadBtn.textContent = "Change";
+          toast("Signature graphic updated.", "success");
+          void loadWorkspace();
+        } catch (err) { toast(err.message, "error"); }
+      } else {
+        window._pendingSigGraphicFile = file;
+        _updateSigGraphicPreview(URL.createObjectURL(file));
+        sigUploadBtn.textContent = "Change";
+      }
+    });
+  }
+  if (sigClearBtn) {
+    sigClearBtn.addEventListener("click", async () => {
+      if (agentId) {
+        try {
+          await api.updateAgent(agentId, { signature_graphic_url: null });
+          void loadWorkspace();
+        } catch {}
+      }
+      _updateSigGraphicPreview(null);
+      sigClearBtn.remove();
+      if (sigUploadBtn) sigUploadBtn.textContent = "Upload";
+    });
+  }
 }
 
 async function submitAgentModal(agentId) {
@@ -521,6 +573,12 @@ async function submitAgentModal(agentId) {
         fd.append("file", window._pendingAvatarFile);
         window._pendingAvatarFile = null;
         try { await api.uploadAgentAvatar(newAgent.id, fd); } catch {}
+      }
+      if (window._pendingSigGraphicFile) {
+        const fd = new FormData();
+        fd.append("file", window._pendingSigGraphicFile);
+        window._pendingSigGraphicFile = null;
+        try { await api.uploadSignatureGraphic(newAgent.id, fd); } catch {}
       }
       toast("Agent created.", "success");
     }

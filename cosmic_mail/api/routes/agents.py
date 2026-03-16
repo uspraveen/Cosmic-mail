@@ -160,6 +160,39 @@ def get_agent_avatar(
     return FileResponse(path)
 
 
+@router.post("/{agent_id}/signature-graphic", response_model=AgentRead)
+async def upload_signature_graphic(
+    agent_id: str,
+    file: Annotated[UploadFile, File(...)],
+    session: Annotated[Session, Depends(get_session)],
+    auth: Annotated[AuthContext, Depends(get_auth_context)],
+) -> AgentRead:
+    authorize_agent(session, auth, agent_id)
+    data = await file.read()
+    ext = os.path.splitext(file.filename or "")[1].lower() or ".png"
+    settings = get_settings()
+    service = AgentService(session)
+    try:
+        view = service.upload_signature_graphic(agent_id, data, ext=ext, storage_path=settings.attachment_storage_path)
+    except AgentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return _build_agent_read(view)
+
+
+@router.get("/{agent_id}/signature-graphic")
+def get_signature_graphic(
+    agent_id: str,
+    session: Annotated[Session, Depends(get_session)],
+) -> FileResponse:
+    settings = get_settings()
+    service = AgentService(session)
+    try:
+        path = service.get_signature_graphic_path(agent_id, storage_path=settings.attachment_storage_path)
+    except (AgentNotFoundError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="signature graphic not found") from exc
+    return FileResponse(path)
+
+
 def _build_agent_read(view: AgentProfileView) -> AgentRead:
     return AgentRead(
         id=view.agent.id,
@@ -174,6 +207,7 @@ def _build_agent_read(view: AgentProfileView) -> AgentRead:
         signature=view.agent.signature,
         accent_color=view.agent.accent_color,
         avatar_url=view.agent.avatar_url,
+        signature_graphic_url=view.agent.signature_graphic_url,
         status=view.agent.status,
         created_at=view.agent.created_at,
         updated_at=view.agent.updated_at,

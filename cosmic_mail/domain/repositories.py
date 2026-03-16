@@ -111,6 +111,13 @@ class AgentMailboxLinkRepository:
         )
         return list(self.session.scalars(query))
 
+    def list_for_mailbox(self, mailbox_id: str) -> list[AgentMailboxLink]:
+        query = select(AgentMailboxLink).where(AgentMailboxLink.mailbox_id == mailbox_id).order_by(
+            AgentMailboxLink.is_primary.desc(),
+            AgentMailboxLink.created_at.asc(),
+        )
+        return list(self.session.scalars(query))
+
     def list_for_organization(self, organization_id: str) -> list[AgentMailboxLink]:
         query = select(AgentMailboxLink).where(AgentMailboxLink.organization_id == organization_id).order_by(
             AgentMailboxLink.created_at.asc()

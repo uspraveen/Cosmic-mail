@@ -89,6 +89,7 @@ class AgentService:
             signature=payload.signature.strip() if payload.signature else None,
             accent_color=accent_color,
             avatar_url=payload.avatar_url.strip() if payload.avatar_url else None,
+            signature_graphic_url=payload.signature_graphic_url.strip() if payload.signature_graphic_url else None,
             status=AgentStatus.active.value,
         )
         try:
@@ -138,6 +139,8 @@ class AgentService:
             agent.accent_color = self._normalize_accent_color(payload.accent_color)
         if "avatar_url" in updates:
             agent.avatar_url = payload.avatar_url.strip() if payload.avatar_url else None
+        if "signature_graphic_url" in updates:
+            agent.signature_graphic_url = payload.signature_graphic_url.strip() if payload.signature_graphic_url else None
         if "status" in updates and payload.status is not None:
             agent.status = payload.status.value
         if "default_domain_id" in updates:
@@ -234,6 +237,32 @@ class AgentService:
         matches = glob.glob(os.path.join(storage_path, "avatars", agent_id, "avatar.*"))
         if not matches:
             raise FileNotFoundError("avatar not found")
+        return matches[0]
+
+    def upload_signature_graphic(self, agent_id: str, data: bytes, *, ext: str, storage_path: str) -> AgentProfileView:
+        agent = self._agents.get(agent_id)
+        if agent is None:
+            raise AgentNotFoundError("agent not found")
+        import os
+        dir_path = os.path.join(storage_path, "sig-graphics", agent_id)
+        os.makedirs(dir_path, exist_ok=True)
+        file_path = os.path.join(dir_path, f"signature{ext}")
+        with open(file_path, "wb") as fh:
+            fh.write(data)
+        agent.signature_graphic_url = f"/v1/agents/{agent_id}/signature-graphic"
+        self._session.add(agent)
+        self._session.commit()
+        self._session.refresh(agent)
+        return self._build_view(agent)
+
+    def get_signature_graphic_path(self, agent_id: str, *, storage_path: str) -> str:
+        agent = self._agents.get(agent_id)
+        if agent is None:
+            raise AgentNotFoundError("agent not found")
+        import glob, os
+        matches = glob.glob(os.path.join(storage_path, "sig-graphics", agent_id, "signature.*"))
+        if not matches:
+            raise FileNotFoundError("signature graphic not found")
         return matches[0]
 
     def _build_view(self, agent: AgentProfile, *, organization: Organization | None = None) -> AgentProfileView:

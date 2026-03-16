@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 from cosmic_mail.core.config import Settings
 from cosmic_mail.core.security import SecretBox
 from cosmic_mail.domain.models import (
+    AgentMailboxLink,
+    AgentProfile,
     DraftStatus,
     MailDraft,
     MailMessage,
@@ -12,7 +14,7 @@ from cosmic_mail.domain.models import (
     MailboxIdentity,
     MessageDirection,
 )
-from cosmic_mail.domain.repositories import AttachmentRepository, DomainRepository, DraftRepository, MailboxRepository, MessageRepository, ThreadRepository
+from cosmic_mail.domain.repositories import AgentMailboxLinkRepository, AgentRepository, AttachmentRepository, DomainRepository, DraftRepository, MailboxRepository, MessageRepository, ThreadRepository
 from cosmic_mail.domain.schemas import MailDraftCreate, MailboxSyncResult, ThreadReplyCreate
 from cosmic_mail.services.inbound import InboundMailboxClient, InboundMessageEnvelope
 from cosmic_mail.services.attachments import AttachmentService, AttachmentTooLargeError
@@ -71,6 +73,8 @@ class ConversationService:
         self._drafts = DraftRepository(session)
         self._messages = MessageRepository(session)
         self._attachments = AttachmentRepository(session)
+        self._agents = AgentRepository(session)
+        self._agent_mailbox_links = AgentMailboxLinkRepository(session)
         self._outbound_sender = outbound_sender
         self._inbound_client = inbound_client
         self._secret_box = SecretBox(settings.secret_key)
@@ -114,6 +118,7 @@ class ConversationService:
         password = self._decrypt_mailbox_password(mailbox)
         dkim_private_key_pem, dkim_selector, dkim_domain = self._resolve_dkim(mailbox.domain_id)
         outbound_attachments = self._load_draft_attachments(draft.id)
+        agent = self._resolve_agent_for_mailbox(mailbox.id)
         reply_message = None
         if draft.reply_to_message_id:
             reply_message = self._messages.get_by_mailbox_and_internet_id(mailbox.id, draft.reply_to_message_id)
@@ -128,6 +133,13 @@ class ConversationService:
 
         references = self._build_references(draft.reply_to_message_id, reply_message)
 
+        text_body = draft.text_body
+        html_body = draft.html_body
+        if agent and agent.signature:
+            text_body, html_body = _inject_signature(
+                text_body, html_body, agent, self._settings.public_mail_hostname,
+            )
+
         try:
             send_result = self._outbound_sender.send(
                 OutboundSendRequest(
@@ -137,8 +149,8 @@ class ConversationService:
                     to_recipients=draft.to_recipients,
                     cc_recipients=draft.cc_recipients,
                     bcc_recipients=draft.bcc_recipients,
-                    text_body=draft.text_body,
-                    html_body=draft.html_body,
+                    text_body=text_body,
+                    html_body=html_body,
                     in_reply_to=draft.reply_to_message_id,
                     references=references,
                     attachments=outbound_attachments,
@@ -431,6 +443,13 @@ class ConversationService:
             logging.getLogger(__name__).warning("Failed to decrypt DKIM key for domain %s", domain_id)
             return None, None, None
 
+    def _resolve_agent_for_mailbox(self, mailbox_id: str) -> AgentProfile | None:
+        links = self._agent_mailbox_links.list_for_mailbox(mailbox_id)
+        if not links:
+            return None
+        primary = next((l for l in links if l.is_primary), links[0])
+        return self._agents.get(primary.agent_id)
+
     def _load_draft_attachments(self, draft_id: str) -> list[OutboundAttachment]:
         import logging
         logger = logging.getLogger(__name__)
@@ -498,3 +517,72 @@ class ConversationService:
             envelope.subject,
             ensure_utc_datetime(envelope.received_at or envelope.sent_at or utcnow()),
         )
+
+
+def _inject_signature(
+    text_body: str | None,
+    html_body: str | None,
+    agent: AgentProfile,
+    public_hostname: str,
+) -> tuple[str | None, str | None]:
+    """Append the agent's email signature to the draft bodies."""
+    import html as html_mod
+
+    sig_text = (agent.signature or "").strip()
+    if not sig_text:
+        return text_body, html_body
+
+    # Resolve the logo URL: signature_graphic_url > avatar_url > None
+    logo_url = agent.signature_graphic_url or agent.avatar_url
+    if logo_url and logo_url.startswith("/"):
+        logo_url = f"https://{public_hostname}{logo_url}"
+
+    # Plain-text signature
+    plain_sig = f"\n\n--\n{sig_text}"
+    if agent.name:
+        plain_sig = f"\n\n--\n{sig_text}\n{agent.name}"
+        if agent.title:
+            plain_sig = f"\n\n--\n{sig_text}\n{agent.name} | {agent.title}"
+
+    updated_text = ((text_body or "") + plain_sig) if text_body or not html_body else text_body
+
+    # HTML signature
+    logo_html = ""
+    if logo_url:
+        logo_html = (
+            f'<img src="{html_mod.escape(logo_url)}" alt="{html_mod.escape(agent.name)}"'
+            f' width="48" height="48"'
+            f' style="width:48px;height:48px;border-radius:8px;object-fit:cover;display:block">'
+        )
+
+    name_html = ""
+    if agent.name:
+        name_html = f'<strong style="font-size:14px;color:#111">{html_mod.escape(agent.name)}</strong>'
+        if agent.title:
+            name_html += f'<br><span style="font-size:12px;color:#666">{html_mod.escape(agent.title)}</span>'
+
+    sig_lines = html_mod.escape(sig_text).replace("\n", "<br>")
+    html_sig = (
+        '<div style="margin-top:24px;padding-top:16px;border-top:1px solid #e5e5e5;font-family:sans-serif">'
+        f'<div style="font-size:13px;color:#333;line-height:1.5">{sig_lines}</div>'
+        '<table cellpadding="0" cellspacing="0" border="0" style="margin-top:12px">'
+        '<tr>'
+    )
+    if logo_html:
+        html_sig += f'<td style="vertical-align:middle;padding-right:12px">{logo_html}</td>'
+    if name_html:
+        html_sig += f'<td style="vertical-align:middle">{name_html}</td>'
+    html_sig += '</tr></table></div>'
+
+    updated_html = html_body
+    if html_body:
+        # Insert before closing </body> or append
+        if "</body>" in html_body.lower():
+            idx = html_body.lower().rfind("</body>")
+            updated_html = html_body[:idx] + html_sig + html_body[idx:]
+        else:
+            updated_html = html_body + html_sig
+    elif text_body:
+        updated_html = None  # keep as plain text only
+
+    return updated_text, updated_html

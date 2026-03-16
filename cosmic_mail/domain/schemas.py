@@ -175,6 +175,7 @@ class AgentCreate(BaseModel):
     default_domain_id: str | None = None
     accent_color: str | None = Field(default=None, max_length=24)
     avatar_url: str | None = Field(default=None, max_length=512)
+    signature_graphic_url: str | None = Field(default=None, max_length=512)
 
 
 class AgentUpdate(BaseModel):
@@ -187,6 +188,7 @@ class AgentUpdate(BaseModel):
     default_domain_id: str | None = None
     accent_color: str | None = Field(default=None, max_length=24)
     avatar_url: str | None = Field(default=None, max_length=512)
+    signature_graphic_url: str | None = Field(default=None, max_length=512)
     status: AgentStatus | None = None
 
 
@@ -222,6 +224,7 @@ class AgentRead(BaseModel):
     signature: str | None
     accent_color: str
     avatar_url: str | None
+    signature_graphic_url: str | None
     status: AgentStatus
     created_at: datetime
     updated_at: datetime

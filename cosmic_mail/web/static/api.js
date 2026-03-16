@@ -50,6 +50,19 @@ export const api = {
         return res.json();
       });
   },
+  uploadSignatureGraphic: (agentId, formData) => {
+    const headers = {};
+    if (state.apiKey) headers["X-API-Key"] = state.apiKey;
+    return fetch(`/v1/agents/${agentId}/signature-graphic`, { method: "POST", headers, body: formData })
+      .then(async res => {
+        if (!res.ok) {
+          let detail = `HTTP ${res.status}`;
+          try { const d = await res.json(); detail = d.detail || JSON.stringify(d); } catch {}
+          throw new Error(detail);
+        }
+        return res.json();
+      });
+  },
 
   // Domains
   listDomains:        () => request("/v1/domains"),

@@ -130,6 +130,7 @@ class AgentProfile(Base):
     signature: Mapped[str | None] = mapped_column(Text, nullable=True)
     accent_color: Mapped[str] = mapped_column(String(24), nullable=False, default="#ff8a1f")
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    signature_graphic_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default=AgentStatus.active.value)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
