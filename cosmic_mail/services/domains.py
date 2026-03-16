@@ -60,8 +60,8 @@ class DomainService:
             "v=DMARC1",
             f"p={self._settings.dmarc_policy}",
             f"sp={self._settings.dmarc_subdomain_policy}",
-            "adkim=s",
-            "aspf=s",
+            "adkim=r",
+            "aspf=r",
             "pct=100",
         ]
         if self._settings.dmarc_rua:
@@ -73,7 +73,7 @@ class DomainService:
             status=DomainStatus.pending_dns.value,
             mx_target=self._settings.public_mail_hostname,
             mx_priority=self._settings.default_mx_priority,
-            spf_value="v=spf1 mx -all",
+            spf_value="v=spf1 mx include:amazonses.com -all",
             dmarc_value="; ".join(dmarc_parts),
             dkim_selector=self._settings.default_dkim_selector,
             dkim_public_key=key_pair.public_key,
@@ -214,8 +214,8 @@ def _build_dmarc_value(
         "v=DMARC1",
         f"p={dmarc_policy}",
         f"sp={dmarc_subdomain_policy}",
-        "adkim=s",
-        "aspf=s",
+        "adkim=r",
+        "aspf=r",
         "pct=100",
     ]
     if rua:
