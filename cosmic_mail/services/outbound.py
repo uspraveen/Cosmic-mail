@@ -27,6 +27,13 @@ class OutboundAttachment:
 
 
 @dataclass(frozen=True)
+class OutboundInlineImage:
+    cid: str
+    content_type: str
+    data: bytes
+
+
+@dataclass(frozen=True)
 class OutboundSendRequest:
     from_address: str
     from_name: str | None
@@ -40,6 +47,7 @@ class OutboundSendRequest:
     in_reply_to: str | None = None
     references: list[str] = field(default_factory=list)
     attachments: list[OutboundAttachment] = field(default_factory=list)
+    inline_images: list[OutboundInlineImage] = field(default_factory=list)
     dkim_private_key_pem: str | None = None
     dkim_selector: str | None = None
     dkim_domain: str | None = None
@@ -124,6 +132,15 @@ class SMTPOutboundMailSender:
         if html_body:
             message.set_content(text_body or html_to_text(html_body) or " ")
             message.add_alternative(html_body, subtype="html")
+            if request.inline_images:
+                html_part = message.get_payload()[1]
+                for img in request.inline_images:
+                    maintype, _, subtype = img.content_type.partition("/")
+                    if not maintype or not subtype:
+                        maintype, subtype = "image", "png"
+                    html_part.add_related(
+                        img.data, maintype=maintype, subtype=subtype, cid=img.cid,
+                    )
         else:
             message.set_content(text_body or " ")
 

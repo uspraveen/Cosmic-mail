@@ -26,7 +26,7 @@ from cosmic_mail.services.message_utils import (
     unique_preserve_order,
     utcnow,
 )
-from cosmic_mail.services.outbound import OutboundAttachment, OutboundMailError, OutboundMailSender, OutboundSendRequest
+from cosmic_mail.services.outbound import OutboundAttachment, OutboundInlineImage, OutboundMailError, OutboundMailSender, OutboundSendRequest
 
 
 class MailboxNotFoundError(ValueError):
@@ -135,8 +135,9 @@ class ConversationService:
 
         text_body = draft.text_body
         html_body = draft.html_body
+        inline_images: list[OutboundInlineImage] = []
         if agent and agent.signature:
-            text_body, html_body = _inject_signature(
+            text_body, html_body, inline_images = _inject_signature(
                 text_body, html_body, agent, self._settings.public_mail_hostname,
             )
 
@@ -154,6 +155,7 @@ class ConversationService:
                     in_reply_to=draft.reply_to_message_id,
                     references=references,
                     attachments=outbound_attachments,
+                    inline_images=inline_images,
                     dkim_private_key_pem=dkim_private_key_pem,
                     dkim_selector=dkim_selector,
                     dkim_domain=dkim_domain,
@@ -524,18 +526,15 @@ def _inject_signature(
     html_body: str | None,
     agent: AgentProfile,
     public_hostname: str,
-) -> tuple[str | None, str | None]:
+) -> tuple[str | None, str | None, list[OutboundInlineImage]]:
     """Append the agent's email signature to the draft bodies."""
     import html as html_mod
+    import logging
 
+    logger = logging.getLogger(__name__)
     sig_text = (agent.signature or "").strip()
     if not sig_text:
-        return text_body, html_body
-
-    # Resolve the logo URL: signature_graphic_url > avatar_url > None
-    logo_url = agent.signature_graphic_url or agent.avatar_url
-    if logo_url and logo_url.startswith("/"):
-        logo_url = f"https://{public_hostname}{logo_url}"
+        return text_body, html_body, []
 
     # Plain-text signature
     plain_sig = f"\n\n--\n{sig_text}"
@@ -546,14 +545,25 @@ def _inject_signature(
 
     updated_text = ((text_body or "") + plain_sig) if text_body or not html_body else text_body
 
-    # HTML signature
+    # Fetch the logo and embed as CID inline image
+    logo_url = agent.signature_graphic_url or agent.avatar_url
+    if logo_url and logo_url.startswith("/"):
+        logo_url = f"https://{public_hostname}{logo_url}"
+
+    inline_images: list[OutboundInlineImage] = []
     logo_html = ""
     if logo_url:
-        logo_html = (
-            f'<img src="{html_mod.escape(logo_url)}" alt="{html_mod.escape(agent.name)}"'
-            f' width="48" height="48"'
-            f' style="width:48px;height:48px;border-radius:8px;object-fit:cover;display:block">'
-        )
+        logo_data, logo_ct = _fetch_image(logo_url)
+        if logo_data:
+            cid = f"sig-logo-{agent.id}"
+            inline_images.append(OutboundInlineImage(cid=cid, content_type=logo_ct, data=logo_data))
+            logo_html = (
+                f'<img src="cid:{cid}" alt="{html_mod.escape(agent.name)}"'
+                f' width="48" height="48"'
+                f' style="width:48px;height:48px;border-radius:8px;object-fit:cover;display:block">'
+            )
+        else:
+            logger.warning("Could not fetch signature logo from %s", logo_url)
 
     name_html = ""
     if agent.name:
@@ -576,13 +586,26 @@ def _inject_signature(
 
     updated_html = html_body
     if html_body:
-        # Insert before closing </body> or append
         if "</body>" in html_body.lower():
             idx = html_body.lower().rfind("</body>")
             updated_html = html_body[:idx] + html_sig + html_body[idx:]
         else:
             updated_html = html_body + html_sig
     elif text_body:
-        updated_html = None  # keep as plain text only
+        updated_html = None
 
-    return updated_text, updated_html
+    return updated_text, updated_html, inline_images
+
+
+def _fetch_image(url: str) -> tuple[bytes | None, str]:
+    """Fetch an image from a URL. Returns (data, content_type) or (None, '')."""
+    import logging
+    try:
+        import httpx
+        with httpx.Client(timeout=10, follow_redirects=True) as client:
+            resp = client.get(url)
+            if resp.status_code == 200 and resp.headers.get("content-type", "").startswith("image/"):
+                return resp.content, resp.headers["content-type"].split(";")[0]
+    except Exception as exc:
+        logging.getLogger(__name__).warning("Failed to fetch signature image %s: %s", url, exc)
+    return None, ""
