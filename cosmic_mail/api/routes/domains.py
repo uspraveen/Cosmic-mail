@@ -10,6 +10,8 @@ from cosmic_mail.api.deps import get_auth_context, get_dns_verifier, get_mail_en
 from cosmic_mail.core.config import Settings
 from cosmic_mail.domain.models import Domain
 from cosmic_mail.domain.schemas import (
+    BlacklistCheckRead,
+    DeliverabilityCheckRead,
     DomainConnectionProfileRead,
     DomainCreate,
     DomainDeliverabilityRead,
@@ -19,7 +21,14 @@ from cosmic_mail.domain.schemas import (
     DomainVerificationRead,
     MailServiceEndpointRead,
 )
-from cosmic_mail.services.dns import DNSVerifier, build_dns_records
+from cosmic_mail.services.dns import (
+    DNSVerifier,
+    ExternalDnsVerifier,
+    build_dns_records,
+    check_ip_blacklists,
+    resolve_mx_ip,
+    verify_dns_records,
+)
 from cosmic_mail.services.domains import (
     DomainConflictError,
     DomainDeliverabilityError,
@@ -143,6 +152,49 @@ def rotate_domain_dkim(
     except DomainDeliverabilityError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     return _build_domain_deliverability(domain, settings)
+
+
+@router.get("/{domain_id}/deliverability/check", response_model=DeliverabilityCheckRead)
+def check_domain_deliverability(
+    domain_id: str,
+    session: Annotated[Session, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    mail_engine: Annotated[MailEngine, Depends(get_mail_engine)],
+    dns_verifier: Annotated[DNSVerifier, Depends(get_dns_verifier)],
+    auth: Annotated[AuthContext, Depends(get_auth_context)],
+) -> DeliverabilityCheckRead:
+    """Run an external deliverability check for a domain.
+
+    Resolves all DNS records via a public resolver (8.8.8.8), resolves the MX
+    hostname to an IP, and checks that IP against common DNSBL blacklists.
+    """
+    authorize_domain(session, auth, domain_id)
+    service = DomainService(session, settings, mail_engine, dns_verifier)
+    try:
+        domain = service.get(domain_id)
+    except DomainNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    ext_verifier = ExternalDnsVerifier()
+    records = build_dns_records(domain, settings)
+    dns_checks = verify_dns_records(records, ext_verifier)
+    all_dns_ok = all(check.matched for check in dns_checks)
+
+    mx_ip = resolve_mx_ip(domain.mx_target)
+    blacklists: list[BlacklistCheckRead] = []
+    if mx_ip:
+        for zone, listed in check_ip_blacklists(mx_ip):
+            blacklists.append(BlacklistCheckRead(zone=zone, listed=listed))
+
+    return DeliverabilityCheckRead(
+        domain_id=domain.id,
+        mx_hostname=domain.mx_target,
+        mx_ip=mx_ip,
+        dns_checks=dns_checks,
+        all_dns_ok=all_dns_ok,
+        blacklists=blacklists,
+        any_blacklisted=any(b.listed for b in blacklists),
+    )
 
 
 def _build_domain_read(domain: Domain, settings: Settings) -> DomainRead:

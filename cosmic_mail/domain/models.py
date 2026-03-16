@@ -225,6 +225,11 @@ class MailMessage(Base):
     html_body: Mapped[str | None] = mapped_column(Text, nullable=True)
     preview_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_read: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Bounce detection — new installs get these via create_all; existing Postgres DBs need:
+    # ALTER TABLE messages ADD COLUMN is_bounce BOOLEAN NOT NULL DEFAULT FALSE;
+    # ALTER TABLE messages ADD COLUMN bounce_type VARCHAR(32);
+    is_bounce: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    bounce_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)

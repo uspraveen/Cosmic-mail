@@ -462,6 +462,8 @@ class ConversationService:
                 text_body=envelope.text_body,
                 html_body=envelope.html_body,
                 preview_text=extract_preview(envelope.text_body, envelope.html_body),
+                is_bounce=envelope.is_bounce,
+                bounce_type=envelope.bounce_type,
                 sent_at=ensure_utc_datetime(envelope.sent_at) if envelope.sent_at else None,
                 received_at=ensure_utc_datetime(envelope.received_at),
             )

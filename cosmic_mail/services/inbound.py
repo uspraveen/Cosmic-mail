@@ -50,6 +50,8 @@ class InboundMessageEnvelope:
     sent_at: datetime | None = None
     received_at: datetime = field(default_factory=utcnow)
     attachments: list[InboundAttachment] = field(default_factory=list)
+    is_bounce: bool = False
+    bounce_type: str | None = None  # "hard" | "soft"
 
 
 class InboundMailboxClient(Protocol):
@@ -185,6 +187,7 @@ def _parse_envelope(
     text_body, html_body = extract_message_bodies(parsed)
     message_id = str(parsed.get("Message-ID") or "").strip() or make_msgid(domain=default_domain)
     attachments = _extract_attachments(parsed)
+    is_bounce, bounce_type = _detect_bounce(parsed)
 
     return InboundMessageEnvelope(
         source_uid=source_uid,
@@ -205,7 +208,76 @@ def _parse_envelope(
         sent_at=parse_header_datetime(str(parsed.get("Date")) if parsed.get("Date") else None),
         received_at=utcnow(),
         attachments=attachments,
+        is_bounce=is_bounce,
+        bounce_type=bounce_type,
     )
+
+
+_BOUNCE_FROM_PATTERNS = (
+    "mailer-daemon",
+    "postmaster",
+    "mail delivery subsystem",
+    "delivery subsystem",
+)
+
+_BOUNCE_SUBJECT_PATTERNS = (
+    "delivery status notification",
+    "delivery failure",
+    "mail delivery failed",
+    "returned to sender",
+    "undeliverable",
+    "delivery has failed",
+    "mail system error",
+    "failed delivery",
+    "could not be delivered",
+    "message not delivered",
+)
+
+
+def _detect_bounce(parsed) -> tuple[bool, str | None]:
+    """Return (is_bounce, bounce_type) by inspecting the parsed message.
+
+    bounce_type is "hard" (permanent 5xx), "soft" (transient 4xx), or None
+    when the classification cannot be determined but the message looks like a bounce.
+    """
+    content_type = parsed.get_content_type() or ""
+    report_type = (parsed.get_param("report-type") or "").lower()
+
+    if content_type == "multipart/report" and report_type == "delivery-status":
+        # Walk parts for the machine-readable delivery-status section
+        for part in parsed.walk():
+            if part.get_content_type() == "message/delivery-status":
+                payload = part.get_payload()
+                if isinstance(payload, str):
+                    cls = _parse_dsn_status_class(payload)
+                    if cls == "5":
+                        return True, "hard"
+                    if cls == "4":
+                        return True, "soft"
+        # Standard DSN structure but no parseable status — treat as hard bounce
+        return True, "hard"
+
+    # Fallback: heuristic header matching
+    from_header = str(parsed.get("From") or "").lower()
+    subject = str(parsed.get("Subject") or "").lower()
+
+    if any(p in from_header for p in _BOUNCE_FROM_PATTERNS):
+        return True, "hard"
+    if any(p in subject for p in _BOUNCE_SUBJECT_PATTERNS):
+        return True, "hard"
+
+    return False, None
+
+
+def _parse_dsn_status_class(delivery_status_payload: str) -> str | None:
+    """Return the RFC 3463 status class digit (2/4/5) from a delivery-status part."""
+    for line in delivery_status_payload.splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith("status:"):
+            value = stripped.split(":", 1)[1].strip()
+            if value and value[0] in ("2", "4", "5"):
+                return value[0]
+    return None
 
 
 def _extract_attachments(parsed) -> list[InboundAttachment]:

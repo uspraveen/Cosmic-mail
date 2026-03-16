@@ -314,6 +314,8 @@ class MailMessageRead(BaseModel):
     html_body: str | None
     preview_text: str | None
     is_read: bool
+    is_bounce: bool = False
+    bounce_type: str | None = None
     sent_at: datetime | None
     received_at: datetime | None
     created_at: datetime
@@ -440,3 +442,36 @@ class HealthRead(BaseModel):
 class ReadyCheck(BaseModel):
     status: str
     details: dict[str, str]
+
+
+# ── Search ────────────────────────────────────────────────────────────────────
+
+class MessageSearchResult(BaseModel):
+    total: int
+    page: int
+    per_page: int
+    results: list[MailMessageRead]
+
+
+class ThreadSearchResult(BaseModel):
+    total: int
+    page: int
+    per_page: int
+    results: list[MailThreadRead]
+
+
+# ── External deliverability check ─────────────────────────────────────────────
+
+class BlacklistCheckRead(BaseModel):
+    zone: str
+    listed: bool
+
+
+class DeliverabilityCheckRead(BaseModel):
+    domain_id: str
+    mx_hostname: str
+    mx_ip: str | None
+    dns_checks: list[DomainVerificationCheck]
+    all_dns_ok: bool
+    blacklists: list[BlacklistCheckRead]
+    any_blacklisted: bool

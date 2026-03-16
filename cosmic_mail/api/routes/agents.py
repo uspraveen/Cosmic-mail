@@ -208,6 +208,7 @@ def _build_agent_read(view: AgentProfileView) -> AgentRead:
         accent_color=view.agent.accent_color,
         avatar_url=view.agent.avatar_url,
         signature_graphic_url=view.agent.signature_graphic_url,
+        approval_required=view.agent.approval_required,
         status=view.agent.status,
         created_at=view.agent.created_at,
         updated_at=view.agent.updated_at,

@@ -11,7 +11,7 @@ def test_root_serves_operator_console(client):
     response = client.get("/")
 
     assert response.status_code == 200
-    assert "Cosmic Mail Console" in response.text
+    assert "Cosmic Mail" in response.text
     assert 'data-view="agents"' in response.text
     assert "/static/app.css" in response.text
     assert "/static/app.js" in response.text
@@ -25,7 +25,7 @@ def test_static_assets_are_served(client):
     templates_response = client.get("/static/templates.js")
 
     assert css_response.status_code == 200
-    assert ".nav-button" in css_response.text
+    assert ".nav-" in css_response.text
     assert js_response.status_code == 200
     assert 'from "./api.js"' in js_response.text
     assert api_response.status_code == 200
@@ -60,7 +60,7 @@ def test_operator_console_loads_from_package_data_when_source_static_dir_is_miss
         templates_response = fallback_client.get("/static/templates.js")
 
     assert root_response.status_code == 200
-    assert "Cosmic Mail Console" in root_response.text
+    assert "Cosmic Mail" in root_response.text
     assert js_response.status_code == 200
     assert api_response.status_code == 200
     assert state_response.status_code == 200

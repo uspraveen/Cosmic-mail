@@ -48,7 +48,7 @@ def list_webhooks(
     return [WebhookRead.model_validate(wh) for wh in repo.list_for_organization(None if auth.is_admin else auth.organization_id)]
 
 
-@router.delete("/{webhook_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{webhook_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 def delete_webhook(
     webhook_id: str,
     session: Annotated[Session, Depends(get_session)],

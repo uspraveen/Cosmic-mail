@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from cosmic_mail.api.routes.approvals import router as approvals_router
+from cosmic_mail.api.routes.search import router as search_router
 from cosmic_mail.api.routes.attachments import router as attachments_router
 from cosmic_mail.api.routes.agents import router as agents_router
 from cosmic_mail.api.routes.drafts import router as drafts_router
@@ -222,6 +223,7 @@ def create_app(
     app.include_router(threads_router, prefix=active_settings.api_prefix)
     app.include_router(system_router, prefix=active_settings.api_prefix)
     app.include_router(webhooks_router, prefix=active_settings.api_prefix)
+    app.include_router(search_router, prefix=active_settings.api_prefix)
     return app
 
 

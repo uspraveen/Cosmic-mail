@@ -1,7 +1,17 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from datetime import datetime
+
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
+
+def _dialect_name(session: Session) -> str:
+    try:
+        bind = session.get_bind()
+        return bind.dialect.name
+    except Exception:
+        return "unknown"
+
 
 from cosmic_mail.domain.models import (
     AgentMailboxLink,
@@ -191,6 +201,60 @@ class ThreadRepository:
         query = select(MailThread).where(MailThread.mailbox_id == mailbox_id).order_by(MailThread.last_message_at.desc())
         return list(self.session.scalars(query))
 
+    def search(
+        self,
+        query: str,
+        *,
+        organization_id: str | None = None,
+        mailbox_id: str | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        page: int = 1,
+        per_page: int = 20,
+    ) -> tuple[int, list[MailThread]]:
+        per_page = min(per_page, 100)
+        offset = (page - 1) * per_page
+
+        base = []
+        if organization_id is not None:
+            base.append(MailThread.organization_id == organization_id)
+        if mailbox_id is not None:
+            base.append(MailThread.mailbox_id == mailbox_id)
+        if date_from is not None:
+            base.append(MailThread.last_message_at >= date_from)
+        if date_to is not None:
+            base.append(MailThread.last_message_at <= date_to)
+
+        dialect = _dialect_name(self.session)
+        if dialect == "postgresql":
+            tsvec = func.to_tsvector("english", func.coalesce(MailThread.subject, ""))
+            tsquery = func.websearch_to_tsquery("english", query)
+            search_cond = tsvec.op("@@")(tsquery)
+            rank_expr = func.ts_rank_cd(tsvec, tsquery)
+            count_stmt = select(func.count()).select_from(MailThread).where(*base, search_cond)
+            results_stmt = (
+                select(MailThread)
+                .where(*base, search_cond)
+                .order_by(rank_expr.desc(), MailThread.last_message_at.desc())
+                .offset(offset)
+                .limit(per_page)
+            )
+        else:
+            pattern = f"%{query}%"
+            search_cond = MailThread.subject.ilike(pattern)
+            count_stmt = select(func.count()).select_from(MailThread).where(*base, search_cond)
+            results_stmt = (
+                select(MailThread)
+                .where(*base, search_cond)
+                .order_by(MailThread.last_message_at.desc())
+                .offset(offset)
+                .limit(per_page)
+            )
+
+        total = self.session.scalar(count_stmt) or 0
+        threads = list(self.session.scalars(results_stmt))
+        return total, threads
+
 
 class OrganizationApiKeyRepository:
     def __init__(self, session: Session) -> None:
@@ -298,6 +362,80 @@ class MessageRepository:
             )
         )
         return result.scalar_one()
+
+    def search(
+        self,
+        query: str,
+        *,
+        organization_id: str | None = None,
+        mailbox_id: str | None = None,
+        direction: str | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        page: int = 1,
+        per_page: int = 20,
+    ) -> tuple[int, list[MailMessage]]:
+        per_page = min(per_page, 100)
+        offset = (page - 1) * per_page
+
+        base = []
+        if organization_id is not None:
+            base.append(MailMessage.organization_id == organization_id)
+        if mailbox_id is not None:
+            base.append(MailMessage.mailbox_id == mailbox_id)
+        if direction is not None:
+            base.append(MailMessage.direction == direction)
+        if date_from is not None:
+            base.append(MailMessage.created_at >= date_from)
+        if date_to is not None:
+            base.append(MailMessage.created_at <= date_to)
+
+        dialect = _dialect_name(self.session)
+        if dialect == "postgresql":
+            # Weighted: subject (A) > from_address (B) > body (C)
+            tsvec = (
+                func.setweight(
+                    func.to_tsvector("english", func.coalesce(MailMessage.subject, "")), "A"
+                ).op("||")(
+                    func.setweight(
+                        func.to_tsvector("english", func.coalesce(MailMessage.from_address, "")), "B"
+                    )
+                ).op("||")(
+                    func.setweight(
+                        func.to_tsvector("english", func.coalesce(MailMessage.text_body, "")), "C"
+                    )
+                )
+            )
+            tsquery = func.websearch_to_tsquery("english", query)
+            search_cond = tsvec.op("@@")(tsquery)
+            rank_expr = func.ts_rank_cd(tsvec, tsquery)
+            count_stmt = select(func.count()).select_from(MailMessage).where(*base, search_cond)
+            results_stmt = (
+                select(MailMessage)
+                .where(*base, search_cond)
+                .order_by(rank_expr.desc(), MailMessage.created_at.desc())
+                .offset(offset)
+                .limit(per_page)
+            )
+        else:
+            pattern = f"%{query}%"
+            search_cond = or_(
+                MailMessage.subject.ilike(pattern),
+                MailMessage.from_address.ilike(pattern),
+                MailMessage.text_body.ilike(pattern),
+            )
+            count_stmt = select(func.count()).select_from(MailMessage).where(*base, search_cond)
+            results_stmt = (
+                select(MailMessage)
+                .where(*base, search_cond)
+                .order_by(MailMessage.created_at.desc())
+                .offset(offset)
+                .limit(per_page)
+            )
+
+        total = self.session.scalar(count_stmt) or 0
+        messages = list(self.session.scalars(results_stmt))
+        return total, messages
 
 
 class AttachmentRepository:

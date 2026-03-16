@@ -75,7 +75,7 @@ def download_attachment(
     )
 
 
-@router.delete("/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 def delete_attachment(
     attachment_id: str,
     session: Annotated[Session, Depends(get_session)],

@@ -48,6 +48,103 @@ class DnsPythonVerifier:
         return [str(record) for record in answers]
 
 
+class ExternalDnsVerifier:
+    """DNS verifier that queries via a public resolver (default: 8.8.8.8).
+
+    Use this for deliverability checks that need to validate records as the
+    outside world would see them, bypassing any local resolver caching.
+    """
+
+    def __init__(self, nameserver: str = "8.8.8.8") -> None:
+        self._nameserver = nameserver
+
+    def lookup(self, record_type: str, host: str) -> list[str]:
+        try:
+            resolver = dns.resolver.Resolver(configure=False)
+            resolver.nameservers = [self._nameserver]
+            resolver.lifetime = 8.0
+            answers = resolver.resolve(host, record_type)
+        except (
+            dns.resolver.NXDOMAIN,
+            dns.resolver.NoAnswer,
+            dns.resolver.LifetimeTimeout,
+            dns.resolver.NoNameservers,
+        ):
+            return []
+
+        if record_type == "TXT":
+            values: list[str] = []
+            for record in answers:
+                if hasattr(record, "strings"):
+                    parts = [part.decode("utf-8") for part in record.strings]
+                    values.append("".join(parts))
+                else:
+                    values.append(str(record).strip('"'))
+            return values
+
+        if record_type == "MX":
+            return [
+                f"{record.preference} {record.exchange.to_text().rstrip('.')}"
+                for record in answers
+            ]
+
+        return [str(record) for record in answers]
+
+
+# Well-known DNSBL zones ordered by coverage
+DNSBL_ZONES: list[str] = [
+    "zen.spamhaus.org",
+    "bl.spamcop.net",
+    "dnsbl.sorbs.net",
+]
+
+
+def resolve_mx_ip(mx_hostname: str, nameserver: str = "8.8.8.8") -> str | None:
+    """Resolve a mail-server hostname to its first IPv4 address via a public resolver."""
+    try:
+        resolver = dns.resolver.Resolver(configure=False)
+        resolver.nameservers = [nameserver]
+        resolver.lifetime = 5.0
+        answers = resolver.resolve(mx_hostname, "A")
+        return str(answers[0])
+    except Exception:
+        return None
+
+
+def check_ip_blacklists(
+    ip: str,
+    *,
+    zones: list[str] | None = None,
+    nameserver: str = "8.8.8.8",
+) -> list[tuple[str, bool]]:
+    """Check an IPv4 address against DNSBL zones.
+
+    Returns a list of (zone, listed) tuples.  A network timeout or other error
+    on a specific zone is treated as not-listed for that zone so it does not
+    block the full check.
+    """
+    parts = ip.split(".")
+    if len(parts) != 4:
+        return []
+    reversed_ip = ".".join(reversed(parts))
+    zones_to_check = zones if zones is not None else DNSBL_ZONES
+    results: list[tuple[str, bool]] = []
+    for zone in zones_to_check:
+        lookup_host = f"{reversed_ip}.{zone}"
+        try:
+            resolver = dns.resolver.Resolver(configure=False)
+            resolver.nameservers = [nameserver]
+            resolver.lifetime = 5.0
+            resolver.resolve(lookup_host, "A")
+            results.append((zone, True))
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+            results.append((zone, False))
+        except Exception:
+            # Timeout or nameserver error — skip without failing
+            results.append((zone, False))
+    return results
+
+
 def build_dns_records(domain: Domain, settings: Settings) -> list[DNSRecord]:
     return [
         DNSRecord(
