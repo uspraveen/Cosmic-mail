@@ -23,7 +23,13 @@ logger = logging.getLogger(__name__)
 # Add a new row whenever a column is added to an existing model.
 # ---------------------------------------------------------------------------
 _COLUMN_MIGRATIONS: list[tuple[str, str, str, str]] = [
-    # bounce detection fields added to MailMessage
+    # agent profile fields
+    ("agents", "avatar_url",            "VARCHAR(512)",                   "VARCHAR(512)"),
+    ("agents", "signature_graphic_url", "VARCHAR(512)",                   "VARCHAR(512)"),
+    ("agents", "approval_required",     "BOOLEAN NOT NULL DEFAULT FALSE", "BOOLEAN NOT NULL DEFAULT 0"),
+    # message state fields
+    ("messages", "is_read",    "BOOLEAN NOT NULL DEFAULT FALSE", "BOOLEAN NOT NULL DEFAULT 0"),
+    # bounce detection fields
     ("messages", "is_bounce",   "BOOLEAN NOT NULL DEFAULT FALSE", "BOOLEAN NOT NULL DEFAULT 0"),
     ("messages", "bounce_type", "VARCHAR(32)",                    "VARCHAR(32)"),
 ]
