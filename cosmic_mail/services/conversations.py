@@ -651,12 +651,19 @@ def _inject_signature(
     agent: AgentProfile,
     storage_path: str,
 ) -> tuple[str | None, str | None, list[OutboundInlineImage]]:
-    """Append the agent's email signature to the draft bodies."""
+    """Append the agent's signature to the draft bodies.
+
+    Logo strategy: Gmail does not render CID inline images at all — it strips
+    them silently. The only image format Gmail renders is an externally hosted
+    <img src="https://...">. We use the agent's logo URL directly as the src.
+    For locally uploaded files we serve them via the public /v1/agents/.../avatar
+    endpoint which is already publicly accessible without auth.
+    """
     import html as html_mod
 
     sig_text = (agent.signature or "").strip()
 
-    # Plain-text signature
+    # Plain-text signature (always appended regardless of HTML)
     updated_text = text_body
     if sig_text:
         plain_sig = f"\n\n--\n{sig_text}"
@@ -667,47 +674,37 @@ def _inject_signature(
         if text_body or not html_body:
             updated_text = (text_body or "") + plain_sig
 
-    # Load the logo: sig-graphic preferred, avatar as fallback
-    # Handles both local /v1/agents/... paths (disk read) and external https:// URLs (HTTP fetch)
-    inline_images: list[OutboundInlineImage] = []
+    # Resolve the logo URL — prefer sig-graphic, fall back to avatar.
+    # Use the URL directly as <img src>; never CID-embed (Gmail strips CID images).
+    logo_url = _resolve_logo_url(agent, storage_path)
     logo_html = ""
-    logo_data, logo_ct = _load_agent_logo(
-        agent.id, storage_path,
-        sig_graphic_url=agent.signature_graphic_url,
-        avatar_url=agent.avatar_url,
-    )
-    if logo_data:
-        cid = f"sig-logo-{agent.id}"
-        inline_images.append(OutboundInlineImage(cid=cid, content_type=logo_ct, data=logo_data))
+    if logo_url:
+        alt = html_mod.escape(agent.name or "")
         logo_html = (
-            f'<img src="cid:{cid}" alt="{html_mod.escape(agent.name or "")}"'
-            f' width="48" height="48"'
-            f' style="width:48px;height:48px;border-radius:8px;object-fit:contain;display:block">'
+            f'<img src="{logo_url}" alt="{alt}" width="40" height="40"'
+            f' style="width:40px;height:40px;border-radius:6px;vertical-align:middle;display:inline-block">'
         )
 
     name_parts: list[str] = []
     if agent.name:
-        name_parts.append(f'<span style="font-weight:600">{html_mod.escape(agent.name)}</span>')
+        name_parts.append(f'<span style="font-weight:600;color:#111">{html_mod.escape(agent.name)}</span>')
     if agent.title:
-        name_parts.append(f'<span style="color:#666">{html_mod.escape(agent.title)}</span>')
+        name_parts.append(f'<span style="color:#777">{html_mod.escape(agent.title)}</span>')
 
-    # Build HTML signature block only if there's something to show
     if not sig_text and not logo_html and not name_parts:
-        return updated_text, html_body, inline_images
+        return updated_text, html_body, []
 
-    # Personal-style sig: no <table>, no background colours, no marketing patterns.
-    # Use inline-block so logo + name sit side-by-side without a table layout,
-    # which is what triggers Gmail's Promotions classifier.
+    # Minimal personal-style sig block — no <table>, no background colours.
     sig_lines = html_mod.escape(sig_text).replace("\n", "<br>")
     html_sig = '<div style="margin-top:16px;padding-top:12px;border-top:1px solid #e0e0e0;font-family:sans-serif;font-size:13px;color:#444;line-height:1.5">'
     if sig_lines:
         html_sig += f'<div style="margin-bottom:8px">{sig_lines}</div>'
     if logo_html or name_parts:
-        html_sig += '<div style="display:inline-block;vertical-align:middle">'
+        html_sig += '<div>'
         if logo_html:
-            html_sig += f'<span style="display:inline-block;vertical-align:middle;margin-right:8px">{logo_html}</span>'
+            html_sig += f'<span style="margin-right:8px">{logo_html}</span>'
         if name_parts:
-            html_sig += f'<span style="display:inline-block;vertical-align:middle">{" &middot; ".join(name_parts)}</span>'
+            html_sig += " &middot; ".join(name_parts)
         html_sig += '</div>'
     html_sig += '</div>'
 
@@ -719,87 +716,27 @@ def _inject_signature(
         else:
             updated_html = html_body + html_sig
     elif logo_html:
-        # Text-only draft with a logo: synthesize a minimal personal-style HTML part.
-        # Avoid <table>, backgrounds, and marketing patterns so Gmail keeps it in Primary.
+        # Text draft + logo: synthesize a minimal HTML part so the image renders.
+        # Plain <div> only — no tables, no backgrounds, no promotional structure.
         text_as_html = html_mod.escape(text_body or "").replace("\n", "<br>")
-        updated_html = (
-            '<div style="font-family:sans-serif;font-size:14px;color:#111;line-height:1.6">'
-            f'{text_as_html}'
-            f'{html_sig}'
-            '</div>'
-        )
+        updated_html = f'<div style="font-family:sans-serif;font-size:14px;line-height:1.6;color:#111">{text_as_html}{html_sig}</div>'
     else:
         updated_html = None
 
-    return updated_text, updated_html, inline_images
+    return updated_text, updated_html, []
 
 
-_IMAGE_CT: dict[str, str] = {
-    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
-    ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
-}
+def _resolve_logo_url(agent: AgentProfile, storage_path: str) -> str | None:
+    """Return the best available logo URL for use as <img src> in outbound email.
 
-
-def _load_agent_logo(
-    agent_id: str,
-    storage_path: str,
-    *,
-    sig_graphic_url: str | None,
-    avatar_url: str | None,
-) -> tuple[bytes | None, str]:
-    """Load the agent logo bytes. Returns (data, content_type) or (None, '').
-
-    - Local /v1/agents/... URLs → read from attachment_storage_path on disk
-    - External https:// URLs → fetch via HTTP
-    - Falls back: sig-graphic → avatar → disk scan
+    Preference: signature_graphic_url > avatar_url.
+    External https:// URLs are used as-is.
+    Local /v1/agents/... paths are served publicly — return as-is (relative),
+    the SMTP sender doesn't need an absolute URL; the recipient's client fetches
+    from the public hostname. For local disk-only uploads we skip (no public URL).
     """
-    import glob as _glob
-    import os
+    for url in (agent.signature_graphic_url, agent.avatar_url):
+        if url and (url.startswith("http://") or url.startswith("https://")):
+            return url
+    return None
 
-    def _read_disk(pattern: str) -> tuple[bytes | None, str]:
-        matches = _glob.glob(pattern)
-        if not matches:
-            return None, ""
-        path = matches[0]
-        ext = os.path.splitext(path)[1].lower()
-        ct = _IMAGE_CT.get(ext, "image/jpeg")
-        try:
-            with open(path, "rb") as fh:
-                return fh.read(), ct
-        except OSError:
-            return None, ""
-
-    def _resolve(url: str | None, disk_pattern: str) -> tuple[bytes | None, str]:
-        if not url:
-            return _read_disk(disk_pattern)
-        if url.startswith("http://") or url.startswith("https://"):
-            return _fetch_image(url)
-        # local /v1/agents/... path → read from disk
-        return _read_disk(disk_pattern)
-
-    # Try signature graphic first
-    data, ct = _resolve(
-        sig_graphic_url,
-        os.path.join(storage_path, "sig-graphics", agent_id, "signature.*"),
-    )
-    if data:
-        return data, ct
-
-    # Fall back to avatar
-    return _resolve(
-        avatar_url,
-        os.path.join(storage_path, "avatars", agent_id, "avatar.*"),
-    )
-
-
-def _fetch_image(url: str) -> tuple[bytes | None, str]:
-    """Fetch an image from an external URL. Returns (data, content_type) or (None, '')."""
-    try:
-        import httpx
-        with httpx.Client(timeout=10, follow_redirects=True) as client:
-            resp = client.get(url)
-            if resp.status_code == 200 and resp.headers.get("content-type", "").startswith("image/"):
-                return resp.content, resp.headers["content-type"].split(";")[0]
-    except Exception as exc:
-        logger.warning("Failed to fetch signature image %s: %s", url, exc)
-    return None, ""
