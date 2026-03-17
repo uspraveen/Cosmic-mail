@@ -710,19 +710,17 @@ def _inject_signature(
 
     updated_html = html_body
     if html_body:
+        # Existing HTML draft — inject sig block and embed logo as CID inline image
         if "</body>" in html_body.lower():
             idx = html_body.lower().rfind("</body>")
             updated_html = html_body[:idx] + html_sig + html_body[idx:]
         else:
             updated_html = html_body + html_sig
-    elif logo_html:
-        # No HTML draft but we have a logo to embed as a CID inline image.
-        # The SMTP sender only attaches inline images when an HTML part exists,
-        # so we must synthesize one — mirror the text body then append the sig block.
-        text_as_html = html_mod.escape(text_body or "").replace("\n", "<br>") if text_body else ""
-        updated_html = f'<div style="font-family:sans-serif;font-size:14px;color:#111">{text_as_html}</div>{html_sig}'
     else:
-        # No logo, no existing HTML — keep plain text only
+        # Plain-text draft — keep it plain text so Gmail delivers to Primary inbox.
+        # CID inline images require an HTML part; synthesizing one triggers Gmail's
+        # Promotions classifier. Drop the logo for text-only drafts.
+        inline_images = []
         updated_html = None
 
     return updated_text, updated_html, inline_images
