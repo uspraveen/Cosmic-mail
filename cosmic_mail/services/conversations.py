@@ -248,9 +248,9 @@ class ConversationService:
         text_body = draft.text_body
         html_body = draft.html_body
         inline_images: list[OutboundInlineImage] = []
-        if agent and agent.signature:
+        if agent and (agent.signature or agent.signature_graphic_url or agent.avatar_url):
             text_body, html_body, inline_images = _inject_signature(
-                text_body, html_body, agent, self._settings.public_mail_hostname,
+                text_body, html_body, agent, self._settings.attachment_storage_path,
             )
 
         try:
@@ -649,45 +649,37 @@ def _inject_signature(
     text_body: str | None,
     html_body: str | None,
     agent: AgentProfile,
-    public_hostname: str,
+    storage_path: str,
 ) -> tuple[str | None, str | None, list[OutboundInlineImage]]:
     """Append the agent's email signature to the draft bodies."""
     import html as html_mod
-    import logging
 
-    logger = logging.getLogger(__name__)
     sig_text = (agent.signature or "").strip()
-    if not sig_text:
-        return text_body, html_body, []
 
     # Plain-text signature
-    plain_sig = f"\n\n--\n{sig_text}"
-    if agent.name:
-        plain_sig = f"\n\n--\n{sig_text}\n{agent.name}"
-        if agent.title:
-            plain_sig = f"\n\n--\n{sig_text}\n{agent.name} | {agent.title}"
+    updated_text = text_body
+    if sig_text:
+        plain_sig = f"\n\n--\n{sig_text}"
+        if agent.name:
+            plain_sig = f"\n\n--\n{sig_text}\n{agent.name}"
+            if agent.title:
+                plain_sig = f"\n\n--\n{sig_text}\n{agent.name} | {agent.title}"
+        if text_body or not html_body:
+            updated_text = (text_body or "") + plain_sig
 
-    updated_text = ((text_body or "") + plain_sig) if text_body or not html_body else text_body
-
-    # Fetch the logo and embed as CID inline image
-    logo_url = agent.signature_graphic_url or agent.avatar_url
-    if logo_url and logo_url.startswith("/"):
-        logo_url = f"https://{public_hostname}{logo_url}"
-
+    # Load the logo directly from disk (sig-graphic preferred, avatar fallback)
     inline_images: list[OutboundInlineImage] = []
     logo_html = ""
-    if logo_url:
-        logo_data, logo_ct = _fetch_image(logo_url)
-        if logo_data:
-            cid = f"sig-logo-{agent.id}"
-            inline_images.append(OutboundInlineImage(cid=cid, content_type=logo_ct, data=logo_data))
-            logo_html = (
-                f'<img src="cid:{cid}" alt="{html_mod.escape(agent.name)}"'
-                f' width="48" height="48"'
-                f' style="width:48px;height:48px;border-radius:8px;object-fit:cover;display:block">'
-            )
-        else:
-            logger.warning("Could not fetch signature logo from %s", logo_url)
+    logo_data, logo_ct = _load_agent_logo(agent.id, storage_path,
+                                          prefer_sig_graphic=bool(agent.signature_graphic_url))
+    if logo_data:
+        cid = f"sig-logo-{agent.id}"
+        inline_images.append(OutboundInlineImage(cid=cid, content_type=logo_ct, data=logo_data))
+        logo_html = (
+            f'<img src="cid:{cid}" alt="{html_mod.escape(agent.name or "")}"'
+            f' width="48" height="48"'
+            f' style="width:48px;height:48px;border-radius:8px;object-fit:contain;display:block">'
+        )
 
     name_html = ""
     if agent.name:
@@ -695,18 +687,22 @@ def _inject_signature(
         if agent.title:
             name_html += f'<br><span style="font-size:12px;color:#666">{html_mod.escape(agent.title)}</span>'
 
+    # Build HTML signature block only if there's something to show
+    if not sig_text and not logo_html and not name_html:
+        return updated_text, html_body, inline_images
+
     sig_lines = html_mod.escape(sig_text).replace("\n", "<br>")
-    html_sig = (
-        '<div style="margin-top:24px;padding-top:16px;border-top:1px solid #e5e5e5;font-family:sans-serif">'
-        f'<div style="font-size:13px;color:#333;line-height:1.5">{sig_lines}</div>'
-        '<table cellpadding="0" cellspacing="0" border="0" style="margin-top:12px">'
-        '<tr>'
-    )
-    if logo_html:
-        html_sig += f'<td style="vertical-align:middle;padding-right:12px">{logo_html}</td>'
-    if name_html:
-        html_sig += f'<td style="vertical-align:middle">{name_html}</td>'
-    html_sig += '</tr></table></div>'
+    html_sig = '<div style="margin-top:24px;padding-top:16px;border-top:1px solid #e5e5e5;font-family:sans-serif">'
+    if sig_lines:
+        html_sig += f'<div style="font-size:13px;color:#333;line-height:1.5">{sig_lines}</div>'
+    if logo_html or name_html:
+        html_sig += '<table cellpadding="0" cellspacing="0" border="0" style="margin-top:12px"><tr>'
+        if logo_html:
+            html_sig += f'<td style="vertical-align:middle;padding-right:12px">{logo_html}</td>'
+        if name_html:
+            html_sig += f'<td style="vertical-align:middle">{name_html}</td>'
+        html_sig += '</tr></table>'
+    html_sig += '</div>'
 
     updated_html = html_body
     if html_body:
@@ -715,21 +711,48 @@ def _inject_signature(
             updated_html = html_body[:idx] + html_sig + html_body[idx:]
         else:
             updated_html = html_body + html_sig
-    elif text_body:
+    elif sig_text:
+        # text-only draft: don't synthesize HTML — keep it plain
         updated_html = None
+    else:
+        # logo/name only, no existing html_body — wrap in minimal HTML
+        updated_html = f"<div>{html_sig}</div>"
 
     return updated_text, updated_html, inline_images
 
 
-def _fetch_image(url: str) -> tuple[bytes | None, str]:
-    """Fetch an image from a URL. Returns (data, content_type) or (None, '')."""
-    import logging
-    try:
-        import httpx
-        with httpx.Client(timeout=10, follow_redirects=True) as client:
-            resp = client.get(url)
-            if resp.status_code == 200 and resp.headers.get("content-type", "").startswith("image/"):
-                return resp.content, resp.headers["content-type"].split(";")[0]
-    except Exception as exc:
-        logging.getLogger(__name__).warning("Failed to fetch signature image %s: %s", url, exc)
-    return None, ""
+_IMAGE_CT: dict[str, str] = {
+    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+    ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
+}
+
+
+def _load_agent_logo(
+    agent_id: str, storage_path: str, *, prefer_sig_graphic: bool
+) -> tuple[bytes | None, str]:
+    """Load the agent logo bytes from disk. Returns (data, content_type) or (None, '')."""
+    import glob as _glob
+    import os
+
+    def _read_first(pattern: str) -> tuple[bytes | None, str]:
+        matches = _glob.glob(pattern)
+        if not matches:
+            return None, ""
+        path = matches[0]
+        ext = os.path.splitext(path)[1].lower()
+        ct = _IMAGE_CT.get(ext, "image/jpeg")
+        try:
+            with open(path, "rb") as fh:
+                return fh.read(), ct
+        except OSError:
+            return None, ""
+
+    if prefer_sig_graphic:
+        data, ct = _read_first(os.path.join(storage_path, "sig-graphics", agent_id, "signature.*"))
+        if data:
+            return data, ct
+    data, ct = _read_first(os.path.join(storage_path, "avatars", agent_id, "avatar.*"))
+    if data:
+        return data, ct
+    # fallback: try sig-graphic even if not preferred
+    return _read_first(os.path.join(storage_path, "sig-graphics", agent_id, "signature.*"))
