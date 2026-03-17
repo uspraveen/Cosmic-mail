@@ -715,12 +715,15 @@ def _inject_signature(
             updated_html = html_body[:idx] + html_sig + html_body[idx:]
         else:
             updated_html = html_body + html_sig
-    elif sig_text:
-        # text-only draft: don't synthesize HTML — keep it plain
-        updated_html = None
+    elif logo_html:
+        # No HTML draft but we have a logo to embed as a CID inline image.
+        # The SMTP sender only attaches inline images when an HTML part exists,
+        # so we must synthesize one — mirror the text body then append the sig block.
+        text_as_html = html_mod.escape(text_body or "").replace("\n", "<br>") if text_body else ""
+        updated_html = f'<div style="font-family:sans-serif;font-size:14px;color:#111">{text_as_html}</div>{html_sig}'
     else:
-        # logo/name only, no existing html_body — wrap in minimal HTML
-        updated_html = f"<div>{html_sig}</div>"
+        # No logo, no existing HTML — keep plain text only
+        updated_html = None
 
     return updated_text, updated_html, inline_images
 
