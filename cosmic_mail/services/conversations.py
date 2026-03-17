@@ -685,42 +685,50 @@ def _inject_signature(
             f' style="width:48px;height:48px;border-radius:8px;object-fit:contain;display:block">'
         )
 
-    name_html = ""
+    name_parts: list[str] = []
     if agent.name:
-        name_html = f'<strong style="font-size:14px;color:#111">{html_mod.escape(agent.name)}</strong>'
-        if agent.title:
-            name_html += f'<br><span style="font-size:12px;color:#666">{html_mod.escape(agent.title)}</span>'
+        name_parts.append(f'<span style="font-weight:600">{html_mod.escape(agent.name)}</span>')
+    if agent.title:
+        name_parts.append(f'<span style="color:#666">{html_mod.escape(agent.title)}</span>')
 
     # Build HTML signature block only if there's something to show
-    if not sig_text and not logo_html and not name_html:
+    if not sig_text and not logo_html and not name_parts:
         return updated_text, html_body, inline_images
 
+    # Personal-style sig: no <table>, no background colours, no marketing patterns.
+    # Use inline-block so logo + name sit side-by-side without a table layout,
+    # which is what triggers Gmail's Promotions classifier.
     sig_lines = html_mod.escape(sig_text).replace("\n", "<br>")
-    html_sig = '<div style="margin-top:24px;padding-top:16px;border-top:1px solid #e5e5e5;font-family:sans-serif">'
+    html_sig = '<div style="margin-top:16px;padding-top:12px;border-top:1px solid #e0e0e0;font-family:sans-serif;font-size:13px;color:#444;line-height:1.5">'
     if sig_lines:
-        html_sig += f'<div style="font-size:13px;color:#333;line-height:1.5">{sig_lines}</div>'
-    if logo_html or name_html:
-        html_sig += '<table cellpadding="0" cellspacing="0" border="0" style="margin-top:12px"><tr>'
+        html_sig += f'<div style="margin-bottom:8px">{sig_lines}</div>'
+    if logo_html or name_parts:
+        html_sig += '<div style="display:inline-block;vertical-align:middle">'
         if logo_html:
-            html_sig += f'<td style="vertical-align:middle;padding-right:12px">{logo_html}</td>'
-        if name_html:
-            html_sig += f'<td style="vertical-align:middle">{name_html}</td>'
-        html_sig += '</tr></table>'
+            html_sig += f'<span style="display:inline-block;vertical-align:middle;margin-right:8px">{logo_html}</span>'
+        if name_parts:
+            html_sig += f'<span style="display:inline-block;vertical-align:middle">{" &middot; ".join(name_parts)}</span>'
+        html_sig += '</div>'
     html_sig += '</div>'
 
     updated_html = html_body
     if html_body:
-        # Existing HTML draft — inject sig block and embed logo as CID inline image
         if "</body>" in html_body.lower():
             idx = html_body.lower().rfind("</body>")
             updated_html = html_body[:idx] + html_sig + html_body[idx:]
         else:
             updated_html = html_body + html_sig
+    elif logo_html:
+        # Text-only draft with a logo: synthesize a minimal personal-style HTML part.
+        # Avoid <table>, backgrounds, and marketing patterns so Gmail keeps it in Primary.
+        text_as_html = html_mod.escape(text_body or "").replace("\n", "<br>")
+        updated_html = (
+            '<div style="font-family:sans-serif;font-size:14px;color:#111;line-height:1.6">'
+            f'{text_as_html}'
+            f'{html_sig}'
+            '</div>'
+        )
     else:
-        # Plain-text draft — keep it plain text so Gmail delivers to Primary inbox.
-        # CID inline images require an HTML part; synthesizing one triggers Gmail's
-        # Promotions classifier. Drop the logo for text-only drafts.
-        inline_images = []
         updated_html = None
 
     return updated_text, updated_html, inline_images
