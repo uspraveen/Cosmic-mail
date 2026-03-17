@@ -667,11 +667,15 @@ def _inject_signature(
         if text_body or not html_body:
             updated_text = (text_body or "") + plain_sig
 
-    # Load the logo directly from disk (sig-graphic preferred, avatar fallback)
+    # Load the logo: sig-graphic preferred, avatar as fallback
+    # Handles both local /v1/agents/... paths (disk read) and external https:// URLs (HTTP fetch)
     inline_images: list[OutboundInlineImage] = []
     logo_html = ""
-    logo_data, logo_ct = _load_agent_logo(agent.id, storage_path,
-                                          prefer_sig_graphic=bool(agent.signature_graphic_url))
+    logo_data, logo_ct = _load_agent_logo(
+        agent.id, storage_path,
+        sig_graphic_url=agent.signature_graphic_url,
+        avatar_url=agent.avatar_url,
+    )
     if logo_data:
         cid = f"sig-logo-{agent.id}"
         inline_images.append(OutboundInlineImage(cid=cid, content_type=logo_ct, data=logo_data))
@@ -728,13 +732,22 @@ _IMAGE_CT: dict[str, str] = {
 
 
 def _load_agent_logo(
-    agent_id: str, storage_path: str, *, prefer_sig_graphic: bool
+    agent_id: str,
+    storage_path: str,
+    *,
+    sig_graphic_url: str | None,
+    avatar_url: str | None,
 ) -> tuple[bytes | None, str]:
-    """Load the agent logo bytes from disk. Returns (data, content_type) or (None, '')."""
+    """Load the agent logo bytes. Returns (data, content_type) or (None, '').
+
+    - Local /v1/agents/... URLs → read from attachment_storage_path on disk
+    - External https:// URLs → fetch via HTTP
+    - Falls back: sig-graphic → avatar → disk scan
+    """
     import glob as _glob
     import os
 
-    def _read_first(pattern: str) -> tuple[bytes | None, str]:
+    def _read_disk(pattern: str) -> tuple[bytes | None, str]:
         matches = _glob.glob(pattern)
         if not matches:
             return None, ""
@@ -747,12 +760,37 @@ def _load_agent_logo(
         except OSError:
             return None, ""
 
-    if prefer_sig_graphic:
-        data, ct = _read_first(os.path.join(storage_path, "sig-graphics", agent_id, "signature.*"))
-        if data:
-            return data, ct
-    data, ct = _read_first(os.path.join(storage_path, "avatars", agent_id, "avatar.*"))
+    def _resolve(url: str | None, disk_pattern: str) -> tuple[bytes | None, str]:
+        if not url:
+            return _read_disk(disk_pattern)
+        if url.startswith("http://") or url.startswith("https://"):
+            return _fetch_image(url)
+        # local /v1/agents/... path → read from disk
+        return _read_disk(disk_pattern)
+
+    # Try signature graphic first
+    data, ct = _resolve(
+        sig_graphic_url,
+        os.path.join(storage_path, "sig-graphics", agent_id, "signature.*"),
+    )
     if data:
         return data, ct
-    # fallback: try sig-graphic even if not preferred
-    return _read_first(os.path.join(storage_path, "sig-graphics", agent_id, "signature.*"))
+
+    # Fall back to avatar
+    return _resolve(
+        avatar_url,
+        os.path.join(storage_path, "avatars", agent_id, "avatar.*"),
+    )
+
+
+def _fetch_image(url: str) -> tuple[bytes | None, str]:
+    """Fetch an image from an external URL. Returns (data, content_type) or (None, '')."""
+    try:
+        import httpx
+        with httpx.Client(timeout=10, follow_redirects=True) as client:
+            resp = client.get(url)
+            if resp.status_code == 200 and resp.headers.get("content-type", "").startswith("image/"):
+                return resp.content, resp.headers["content-type"].split(";")[0]
+    except Exception as exc:
+        logger.warning("Failed to fetch signature image %s: %s", url, exc)
+    return None, ""
