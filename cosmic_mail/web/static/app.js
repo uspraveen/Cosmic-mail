@@ -492,7 +492,7 @@ function _updateSigGraphicPreview(url) {
   const container = document.getElementById("sig-graphic-preview");
   if (!container) return;
   if (url) {
-    container.innerHTML = `<img src="${url}" alt="Signature graphic" style="width:48px;height:48px;border-radius:8px;object-fit:cover">`;
+    container.innerHTML = `<img src="${url}" alt="Signature graphic" style="width:48px;height:48px;border-radius:8px;object-fit:contain;background:var(--surface-2)">`;
   } else {
     container.innerHTML = `<div style="width:48px;height:48px;border-radius:8px;background:var(--surface-2);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted)">None</div>`;
   }

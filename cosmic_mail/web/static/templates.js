@@ -228,9 +228,9 @@ export function renderAgentModalBody(agent, domains) {
         <p class="field-hint" style="margin:0 0 8px;font-size:12px;color:var(--muted)">Logo shown in email signatures. Defaults to profile photo if not set.</p>
         <div class="flex items-center gap-8" style="padding-top:2px">
           <div id="sig-graphic-preview">${agent?.signature_graphic_url
-            ? `<img src="${esc(agent.signature_graphic_url)}" alt="Signature graphic" style="width:48px;height:48px;border-radius:8px;object-fit:cover">`
+            ? `<img src="${esc(agent.signature_graphic_url)}" alt="Signature graphic" style="width:48px;height:48px;border-radius:8px;object-fit:contain;background:var(--surface-2)">`
             : (agent?.avatar_url
-              ? `<img src="${esc(agent.avatar_url)}" alt="Default (avatar)" style="width:48px;height:48px;border-radius:8px;object-fit:cover;opacity:0.5">`
+              ? `<img src="${esc(agent.avatar_url)}" alt="Default (avatar)" style="width:48px;height:48px;border-radius:8px;object-fit:contain;background:var(--surface-2);opacity:0.5">`
               : `<div style="width:48px;height:48px;border-radius:8px;background:var(--surface-2);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted)">None</div>`)
           }</div>
           <input type="file" id="modal-agent-sig-graphic-file" accept="image/*" style="display:none">
