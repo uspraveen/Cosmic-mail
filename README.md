@@ -32,7 +32,10 @@ What is built:
 - encrypted mailbox credential storage
 - outbound send flow through pluggable SMTP-style transport
 - outbound DKIM signing at the transport layer
-- CID-embedded signature logos (bypass external image blocking in Gmail/Outlook)
+- externally-hosted signature logos embedded via `<img src>` in outbound HTML (compatible with Gmail image proxy)
+- bounce auto-detection on inbound sync (RFC 3463 DSN parsing + heuristic fallback), stored as `is_bounce` / `bounce_type` on messages
+- full-text search across threads and messages (Postgres `tsvector` weighted ranking; SQLite ILIKE fallback for local dev) with pagination
+- external deliverability validation — public DNS resolver, MX-to-IP resolution, DNSBL blacklist checks (Spamhaus, SpamCop, SORBS)
 - inbound sync through pluggable IMAP-style transport
 - attachment handling for inbound and outbound messages
 - product-owned threads, messages, drafts, and approval records
@@ -199,7 +202,7 @@ Key directories:
 - create a draft
 - send the draft through the configured outbound transport
 - outbound is DKIM-signed per the sending domain's key material
-- signature logos are embedded as CID inline images (bypass external image blocking)
+- signature logos are embedded as externally-hosted `<img src>` URLs (renders correctly in Gmail and all major clients)
 - sync inbound mail through IMAP
 - normalize inbound and outbound mail into product-owned threads and messages
 - attachments are extracted and stored against each message
@@ -248,6 +251,7 @@ Current API groups:
 - `GET /v1/domains/{domain_id}/deliverability`
 - `PATCH /v1/domains/{domain_id}/deliverability`
 - `POST /v1/domains/{domain_id}/rotate-dkim`
+- `GET /v1/domains/{domain_id}/deliverability/check` — live external DNS + DNSBL blacklist check via public resolver
 
 ### Agents
 
@@ -293,6 +297,11 @@ Current API groups:
 - `PATCH /v1/approvals/{approval_id}` — edit subject, body, or recipients before sending
 - `POST /v1/approvals/{approval_id}/approve` — approve and immediately send
 - `POST /v1/approvals/{approval_id}/reject` — reject with optional reviewer note
+
+### Search
+
+- `GET /v1/search/messages` — full-text search across messages (`q`, `mailbox_id`, `direction`, `date_from`, `date_to`, `page`, `per_page`)
+- `GET /v1/search/threads` — full-text search across threads (`q`, `mailbox_id`, `date_from`, `date_to`, `page`, `per_page`)
 
 ### Webhooks
 
