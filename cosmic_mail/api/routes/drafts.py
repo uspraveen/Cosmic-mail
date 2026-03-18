@@ -19,6 +19,7 @@ from cosmic_mail.services.conversations import (
     MailTransportError,
     MailboxCredentialsError,
     MailboxNotFoundError,
+    OutboundFilterBlockedError,
     ThreadNotFoundError,
 )
 from cosmic_mail.services.inbound import InboundMailboxClient
@@ -98,6 +99,11 @@ def send_draft(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except (MailTransportError, MailboxCredentialsError) as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    except OutboundFilterBlockedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"blocked": [{"email": v.email, "reason": v.reason, "scope": v.scope} for v in exc.args[0]]},
+        ) from exc
 
     if approval is not None:
         return MailDraftSendResult(

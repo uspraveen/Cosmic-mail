@@ -275,3 +275,37 @@ class OutboundApproval(Base):
     reviewer_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class FilterRuleScopeType(str, Enum):
+    agent = "agent"
+    inbox = "inbox"
+
+
+class FilterRuleType(str, Enum):
+    whitelist = "whitelist"
+    blacklist = "blacklist"
+
+
+class FilterRulePatternType(str, Enum):
+    exact = "exact"
+    domain = "domain"
+    subdomain = "subdomain"
+    wildcard = "wildcard"
+
+
+class OutboundFilterRule(Base):
+    __tablename__ = "outbound_filter_rules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    organization_id: Mapped[str] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    scope_type: Mapped[str] = mapped_column(String(32), nullable=False)   # "agent" | "inbox"
+    scope_id: Mapped[str] = mapped_column(String(36), nullable=False)     # agent_id or mailbox_id
+    rule_type: Mapped[str] = mapped_column(String(32), nullable=False)    # "whitelist" | "blacklist"
+    pattern_type: Mapped[str] = mapped_column(String(32), nullable=False) # "exact" | "domain" | "subdomain" | "wildcard"
+    pattern: Mapped[str] = mapped_column(String(512), nullable=False)
+    label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)

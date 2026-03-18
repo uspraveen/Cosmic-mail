@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -48,10 +48,13 @@ def create_agent(
 def list_agents(
     session: Annotated[Session, Depends(get_session)],
     auth: Annotated[AuthContext, Depends(get_auth_context)],
+    page: Annotated[int, Query(ge=1)] = 1,
+    per_page: Annotated[int, Query(ge=1, le=200)] = 100,
 ) -> list[AgentRead]:
     service = AgentService(session)
     agents = service.list(organization_id=None if auth.is_admin else auth.organization_id)
-    return [_build_agent_read(agent) for agent in agents]
+    start = (page - 1) * per_page
+    return [_build_agent_read(agent) for agent in agents[start : start + per_page]]
 
 
 @router.get("/{agent_id}", response_model=AgentRead)
@@ -135,14 +138,19 @@ async def upload_agent_avatar(
     auth: Annotated[AuthContext, Depends(get_auth_context)],
 ) -> AgentRead:
     authorize_agent(session, auth, agent_id)
-    data = await file.read()
-    ext = os.path.splitext(file.filename or "")[1].lower() or ".jpg"
     settings = get_settings()
+    data = await file.read()
+    max_bytes = settings.max_attachment_size_mb * 1024 * 1024
+    if len(data) > max_bytes:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=f"file exceeds {settings.max_attachment_size_mb}MB limit")
+    ext = os.path.splitext(file.filename or "")[1].lower() or ".jpg"
     service = AgentService(session)
     try:
         view = service.upload_avatar(agent_id, data, ext=ext, storage_path=settings.attachment_storage_path)
     except AgentNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     return _build_agent_read(view)
 
 
@@ -150,7 +158,9 @@ async def upload_agent_avatar(
 def get_agent_avatar(
     agent_id: str,
     session: Annotated[Session, Depends(get_session)],
+    auth: Annotated[AuthContext, Depends(get_auth_context)],
 ) -> FileResponse:
+    authorize_agent(session, auth, agent_id)
     settings = get_settings()
     service = AgentService(session)
     try:
@@ -168,14 +178,19 @@ async def upload_signature_graphic(
     auth: Annotated[AuthContext, Depends(get_auth_context)],
 ) -> AgentRead:
     authorize_agent(session, auth, agent_id)
-    data = await file.read()
-    ext = os.path.splitext(file.filename or "")[1].lower() or ".png"
     settings = get_settings()
+    data = await file.read()
+    max_bytes = settings.max_attachment_size_mb * 1024 * 1024
+    if len(data) > max_bytes:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=f"file exceeds {settings.max_attachment_size_mb}MB limit")
+    ext = os.path.splitext(file.filename or "")[1].lower() or ".png"
     service = AgentService(session)
     try:
         view = service.upload_signature_graphic(agent_id, data, ext=ext, storage_path=settings.attachment_storage_path)
     except AgentNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     return _build_agent_read(view)
 
 
@@ -183,7 +198,9 @@ async def upload_signature_graphic(
 def get_signature_graphic(
     agent_id: str,
     session: Annotated[Session, Depends(get_session)],
+    auth: Annotated[AuthContext, Depends(get_auth_context)],
 ) -> FileResponse:
+    authorize_agent(session, auth, agent_id)
     settings = get_settings()
     service = AgentService(session)
     try:

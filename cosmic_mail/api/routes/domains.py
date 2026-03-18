@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from cosmic_mail.api.auth import AuthContext, authorize_domain, authorize_organization_access
@@ -69,12 +69,15 @@ def list_domains(
     mail_engine: Annotated[MailEngine, Depends(get_mail_engine)],
     dns_verifier: Annotated[DNSVerifier, Depends(get_dns_verifier)],
     auth: Annotated[AuthContext, Depends(get_auth_context)],
+    page: Annotated[int, Query(ge=1)] = 1,
+    per_page: Annotated[int, Query(ge=1, le=200)] = 100,
 ) -> list[DomainRead]:
     service = DomainService(session, settings, mail_engine, dns_verifier)
     domains = service.list()
     if not auth.is_admin:
         domains = [domain for domain in domains if domain.organization_id == auth.organization_id]
-    return [_build_domain_read(domain, settings) for domain in domains]
+    start = (page - 1) * per_page
+    return [_build_domain_read(domain, settings) for domain in domains[start : start + per_page]]
 
 
 @router.post("/{domain_id}/verify-dns", response_model=DomainVerificationRead)

@@ -3,7 +3,11 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+import re
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 from cosmic_mail.domain.models import AgentStatus, ApprovalStatus, DomainStatus, DraftStatus, MailboxStatus, MessageDirection, WebhookEventType
 
@@ -240,6 +244,13 @@ class MailContact(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     name: str | None = Field(default=None, max_length=255)
 
+    @field_validator("email")
+    @classmethod
+    def validate_email_format(cls, v: str) -> str:
+        if not _EMAIL_RE.match(v):
+            raise ValueError(f"invalid email address: {v!r}")
+        return v.lower().strip()
+
 
 class MailDraftCreate(BaseModel):
     mailbox_id: str
@@ -372,6 +383,65 @@ class OutboundApprovalRead(BaseModel):
     reviewer_note: str | None
     created_at: datetime
     reviewed_at: datetime | None
+
+
+class FilterRuleCreate(BaseModel):
+    rule_type: Literal["whitelist", "blacklist"]
+    pattern_type: Literal["exact", "domain", "subdomain", "wildcard"]
+    pattern: str = Field(min_length=1, max_length=512)
+    label: str | None = Field(default=None, max_length=255)
+    notes: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("pattern")
+    @classmethod
+    def normalise_pattern(cls, v: str) -> str:
+        return v.strip().lower()
+
+
+class FilterRuleBulkCreate(BaseModel):
+    rules: list[FilterRuleCreate] = Field(min_length=1, max_length=100)
+
+
+class FilterRuleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    organization_id: str
+    scope_type: str
+    scope_id: str
+    rule_type: str
+    pattern_type: str
+    pattern: str
+    label: str | None
+    notes: str | None
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class FilterRuleBulkResult(BaseModel):
+    created: list[FilterRuleRead]
+    count: int
+
+
+class FilterCheckRequest(BaseModel):
+    agent_id: str | None = None
+    mailbox_id: str
+    to_recipients: list[MailContact] = Field(min_length=1)
+    cc_recipients: list[MailContact] = Field(default_factory=list)
+    bcc_recipients: list[MailContact] = Field(default_factory=list)
+
+
+class FilterCheckViolation(BaseModel):
+    email: str
+    reason: str
+    scope: str
+    rule_id: str
+
+
+class FilterCheckResult(BaseModel):
+    passed: bool
+    blocked: list[FilterCheckViolation]
 
 
 class ApprovalRejectBody(BaseModel):

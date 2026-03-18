@@ -20,6 +20,28 @@ from cosmic_mail.domain.validation import slugify
 
 HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
+# Allowed image magic-byte signatures → safe extension
+_IMAGE_MAGIC: list[tuple[bytes, str]] = [
+    (b"\xff\xd8\xff", ".jpg"),
+    (b"\x89PNG\r\n\x1a\n", ".png"),
+    (b"GIF87a", ".gif"),
+    (b"GIF89a", ".gif"),
+    (b"RIFF", ".webp"),  # WebP: RIFF????WEBP — checked further below
+]
+
+
+def _detect_image_ext(data: bytes) -> str:
+    """Return the safe file extension for image data based on magic bytes.
+
+    Raises ValueError if the content is not a recognised image type.
+    """
+    for magic, ext in _IMAGE_MAGIC:
+        if data[:len(magic)] == magic:
+            if ext == ".webp" and data[8:12] != b"WEBP":
+                continue
+            return ext
+    raise ValueError("unsupported image type — only JPEG, PNG, GIF, and WebP are allowed")
+
 
 class AgentConflictError(ValueError):
     pass
@@ -220,10 +242,11 @@ class AgentService:
         agent = self._agents.get(agent_id)
         if agent is None:
             raise AgentNotFoundError("agent not found")
+        safe_ext = _detect_image_ext(data)  # raises ValueError for non-image content
         import os
         dir_path = os.path.join(storage_path, "avatars", agent_id)
         os.makedirs(dir_path, exist_ok=True)
-        file_path = os.path.join(dir_path, f"avatar{ext}")
+        file_path = os.path.join(dir_path, f"avatar{safe_ext}")
         with open(file_path, "wb") as fh:
             fh.write(data)
         agent.avatar_url = f"/v1/agents/{agent_id}/avatar"
@@ -246,10 +269,11 @@ class AgentService:
         agent = self._agents.get(agent_id)
         if agent is None:
             raise AgentNotFoundError("agent not found")
+        safe_ext = _detect_image_ext(data)  # raises ValueError for non-image content
         import os
         dir_path = os.path.join(storage_path, "sig-graphics", agent_id)
         os.makedirs(dir_path, exist_ok=True)
-        file_path = os.path.join(dir_path, f"signature{ext}")
+        file_path = os.path.join(dir_path, f"signature{safe_ext}")
         with open(file_path, "wb") as fh:
             fh.write(data)
         agent.signature_graphic_url = f"/v1/agents/{agent_id}/signature-graphic"

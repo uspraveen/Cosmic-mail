@@ -13,6 +13,7 @@ import {
   renderSyncWorker, renderNewApiKeyModal,
   renderApprovalsFilterBar, renderApprovalsList, renderApprovalDetail,
   renderApprovalEditModal, renderRejectModal,
+  renderFilterRulesModal,
 } from "./templates.js";
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
@@ -450,6 +451,10 @@ async function handleMainClick(e) {
   switch (action) {
     case "edit-agent":         openAgentModal(el.dataset.agentId); break;
     case "manage-inboxes":     openManageInboxesModal(el.dataset.agentId); break;
+    case "agent-filter-rules": await openFilterRulesModal("agent", el.dataset.agentId, el.dataset.agentName); break;
+    case "inbox-filter-rules": await openFilterRulesModal("inbox", el.dataset.mailboxId, el.dataset.mailboxAddress); break;
+    case "modal-add-filter-rule":    await handleAddFilterRule(el.dataset.scopeType, el.dataset.scopeId); break;
+    case "modal-delete-filter-rule": await handleDeleteFilterRule(el.dataset.scopeType, el.dataset.scopeId, el.dataset.ruleId); break;
     case "toggle-agent":       await handleToggleAgent(el.dataset.agentId, el.dataset.status); break;
     case "view-threads":       setView("conversations"); state.selectedMailboxId = el.dataset.mailboxId; await loadConversationState(); renderAll(); break;
     case "sync-mailbox":       await handleSyncMailbox(el.dataset.mailboxId); break;
@@ -680,6 +685,61 @@ async function handleToggleAgent(agentId, currentStatus) {
   try {
     await api.updateAgent(agentId, { status: currentStatus === "active" ? "paused" : "active" });
     await loadWorkspace();
+  } catch (err) { toast(err.message, "error"); }
+}
+
+// ── Filter Rules ──────────────────────────────────────────────────────────────
+
+async function openFilterRulesModal(scopeType, scopeId, scopeLabel) {
+  let rules = [];
+  try {
+    rules = scopeType === "agent"
+      ? await api.listAgentFilterRules(scopeId)
+      : await api.listInboxFilterRules(scopeId);
+  } catch (err) { toast(err.message, "error"); return; }
+
+  openModal(
+    `Filter rules — ${scopeLabel}`,
+    renderFilterRulesModal(rules, scopeType, scopeId),
+    [{ label: "Close", cls: "btn-ghost", id: "modal-cancel" }],
+  );
+  document.getElementById("modal-cancel").addEventListener("click", closeModal);
+}
+
+async function handleAddFilterRule(scopeType, scopeId) {
+  const ruleType   = document.getElementById("filter-rule-type")?.value;
+  const patternType = document.getElementById("filter-rule-pattern-type")?.value;
+  const pattern    = document.getElementById("filter-rule-pattern")?.value?.trim();
+  const label      = document.getElementById("filter-rule-label")?.value?.trim() || null;
+
+  if (!pattern) { toast("Pattern is required.", "error"); return; }
+
+  try {
+    if (scopeType === "agent") {
+      await api.createAgentFilterRule(scopeId, { rule_type: ruleType, pattern_type: patternType, pattern, label });
+    } else {
+      await api.createInboxFilterRule(scopeId, { rule_type: ruleType, pattern_type: patternType, pattern, label });
+    }
+    const rules = scopeType === "agent"
+      ? await api.listAgentFilterRules(scopeId)
+      : await api.listInboxFilterRules(scopeId);
+    document.getElementById("modal-body").innerHTML = renderFilterRulesModal(rules, scopeType, scopeId);
+    toast("Rule added.", "success");
+  } catch (err) { toast(err.message, "error"); }
+}
+
+async function handleDeleteFilterRule(scopeType, scopeId, ruleId) {
+  try {
+    if (scopeType === "agent") {
+      await api.deleteAgentFilterRule(scopeId, ruleId);
+    } else {
+      await api.deleteInboxFilterRule(scopeId, ruleId);
+    }
+    const rules = scopeType === "agent"
+      ? await api.listAgentFilterRules(scopeId)
+      : await api.listInboxFilterRules(scopeId);
+    document.getElementById("modal-body").innerHTML = renderFilterRulesModal(rules, scopeType, scopeId);
+    toast("Rule removed.", "success");
   } catch (err) { toast(err.message, "error"); }
 }
 

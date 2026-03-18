@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     secret_key: str = "change-me-for-production"
     attachment_storage_path: str = "/data/attachments"
     max_attachment_size_mb: int = 25
+    cors_allowed_origins: list[str] = ["*"]
 
     model_config = SettingsConfigDict(
         env_prefix="COSMIC_MAIL_",

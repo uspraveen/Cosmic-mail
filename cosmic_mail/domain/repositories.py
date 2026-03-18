@@ -27,6 +27,7 @@ from cosmic_mail.domain.models import (
     Organization,
     OrganizationApiKey,
     OutboundApproval,
+    OutboundFilterRule,
     Webhook,
 )
 
@@ -533,3 +534,39 @@ class OutboundApprovalRepository:
         if mailbox_id is not None:
             query = query.where(OutboundApproval.mailbox_id == mailbox_id)
         return list(self.session.scalars(query))
+
+
+class FilterRuleRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def add(self, rule: OutboundFilterRule) -> OutboundFilterRule:
+        self.session.add(rule)
+        self.session.flush()
+        return rule
+
+    def get(self, rule_id: str) -> OutboundFilterRule | None:
+        return self.session.get(OutboundFilterRule, rule_id)
+
+    def list_for_scope(self, scope_type: str, scope_id: str) -> list[OutboundFilterRule]:
+        query = (
+            select(OutboundFilterRule)
+            .where(
+                OutboundFilterRule.scope_type == scope_type,
+                OutboundFilterRule.scope_id == scope_id,
+                OutboundFilterRule.is_active.is_(True),
+            )
+            .order_by(OutboundFilterRule.rule_type, OutboundFilterRule.created_at)
+        )
+        return list(self.session.scalars(query))
+
+    def list_for_organization(self, organization_id: str) -> list[OutboundFilterRule]:
+        query = (
+            select(OutboundFilterRule)
+            .where(OutboundFilterRule.organization_id == organization_id)
+            .order_by(OutboundFilterRule.created_at)
+        )
+        return list(self.session.scalars(query))
+
+    def delete(self, rule: OutboundFilterRule) -> None:
+        self.session.delete(rule)

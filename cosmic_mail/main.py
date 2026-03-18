@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from importlib import resources
 from pathlib import Path
@@ -9,12 +10,16 @@ from collections import defaultdict
 from threading import Lock
 
 from fastapi import FastAPI, Request, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
+logger = logging.getLogger(__name__)
+
 from cosmic_mail.api.routes.approvals import router as approvals_router
+from cosmic_mail.api.routes.filter_rules import agent_filter_router, inbox_filter_router, filter_check_router
 from cosmic_mail.api.routes.search import router as search_router
 from cosmic_mail.api.routes.attachments import router as attachments_router
 from cosmic_mail.api.routes.agents import router as agents_router
@@ -132,8 +137,15 @@ def create_app(
     active_inbound_client = inbound_client or _build_inbound_client(active_settings)
     active_sync_worker = SyncWorker(session_factory, active_settings, active_inbound_client)
 
+    _DEFAULT_SECRET = "change-me-for-production"
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        if active_settings.secret_key == _DEFAULT_SECRET:
+            logger.warning(
+                "SECURITY WARNING: COSMIC_MAIL_SECRET_KEY is set to the default value. "
+                "This is insecure — set a strong random secret before accepting real traffic."
+            )
         init_db(engine)
         active_sync_worker.start()
         yield
@@ -144,6 +156,29 @@ def create_app(
                 close()
 
     app = FastAPI(title=active_settings.app_name, lifespan=lifespan)
+
+    # CORS — configurable via COSMIC_MAIL_CORS_ALLOWED_ORIGINS
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=active_settings.cors_allowed_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    @app.middleware("http")
+    async def security_headers_middleware(request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        # Only add HSTS on HTTPS (presence of forwarded proto or non-localhost)
+        forwarded_proto = request.headers.get("x-forwarded-proto", "")
+        if forwarded_proto == "https":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
 
     @app.middleware("http")
     async def rate_limit_middleware(request: Request, call_next):
@@ -224,6 +259,9 @@ def create_app(
     app.include_router(system_router, prefix=active_settings.api_prefix)
     app.include_router(webhooks_router, prefix=active_settings.api_prefix)
     app.include_router(search_router, prefix=active_settings.api_prefix)
+    app.include_router(agent_filter_router, prefix=active_settings.api_prefix)
+    app.include_router(inbox_filter_router, prefix=active_settings.api_prefix)
+    app.include_router(filter_check_router, prefix=active_settings.api_prefix)
     return app
 
 

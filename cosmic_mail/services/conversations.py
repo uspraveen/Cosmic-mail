@@ -67,6 +67,10 @@ class MailboxCredentialsError(RuntimeError):
     pass
 
 
+class OutboundFilterBlockedError(ValueError):
+    pass
+
+
 class ConversationService:
     def __init__(
         self,
@@ -131,6 +135,21 @@ class ConversationService:
 
         mailbox = self._require_mailbox(draft.mailbox_id)
         agent = self._resolve_agent_for_mailbox(mailbox.id)
+
+        # Enforce outbound filter rules (before approval queue or direct send)
+        from cosmic_mail.services.filter_rules import FilterRuleService, FilterViolation
+        _all_recipients = [
+            r["email"] for r in (
+                draft.to_recipients + draft.cc_recipients + draft.bcc_recipients
+            )
+        ]
+        _violations = FilterRuleService(self._session).check_recipients(
+            agent_id=agent.id if agent else None,
+            mailbox_id=mailbox.id,
+            recipients=_all_recipients,
+        )
+        if _violations:
+            raise OutboundFilterBlockedError(_violations)
 
         if agent and agent.approval_required:
             draft.status = DraftStatus.pending_approval.value

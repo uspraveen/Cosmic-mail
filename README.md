@@ -24,7 +24,7 @@ What is built:
 
 - organizations and org-scoped API keys
 - agent profiles with prompts, signatures, personas, default domains, mailbox links, and approval mode
-- agent avatar and signature-graphic uploads
+- agent avatar and signature-graphic uploads with magic-byte content validation (JPEG, PNG, GIF, WebP only)
 - domain onboarding with generated `MX`, `SPF`, `DKIM`, and `DMARC`
 - DNS verification and domain deliverability management
 - DKIM key rotation per domain
@@ -48,6 +48,14 @@ What is built:
 - a built-in operator console served from `/`
 - Linux deployment artifacts for `Cosmic Mail + Postgres + Apache James`
 - automated tests and Linux smoke coverage
+- API key authentication required on all `/v1` endpoints including image-serving routes
+- rate limiting — 120 requests per minute per IP + key prefix, 429 on breach
+- security headers on every response (`X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection`, `Referrer-Policy`, `Permissions-Policy`, `Strict-Transport-Security` when behind HTTPS)
+- configurable CORS middleware
+- startup enforcement — insecure default `secret_key` triggers a logged warning at boot
+- email address format validation on draft recipients
+- pagination (`page` / `per_page`) on all list endpoints
+- outbound filter rules — per-agent and per-inbox whitelist/blacklist with `exact`, `domain`, `subdomain`, and `wildcard` pattern types; blacklists always win; whitelist gates apply independently per scope; enforcement at send time raises a structured error before transport; pre-flight check endpoint for draft validation
 
 What is not finished:
 
@@ -55,7 +63,7 @@ What is not finished:
 - final TLS / HTTPS production setup with a real domain
 - bounce / complaint ingestion
 - alias and forwarding controls
-- abuse controls, quotas, and rate shaping for hostile multi-tenant use
+- per-organization rate quotas and abuse shaping for hostile multi-tenant use
 - JMAP-based identity or event integration
 
 Short version:
@@ -98,6 +106,7 @@ The current product model is:
 - `MailAttachment`
 - `OutboundApproval`
 - `Webhook`
+- `OutboundFilterRule`
 
 Important relationship summary:
 
@@ -111,6 +120,8 @@ Important relationship summary:
 - one message owns many attachments
 - one draft in approval mode produces one `OutboundApproval` record
 - one organization owns many webhooks
+- one agent or one inbox can own many `OutboundFilterRule` records (scoped separately)
+- filter rules are evaluated at send time: blacklists across both scopes win first, then whitelist gates apply per scope
 
 ## Architecture
 
@@ -153,7 +164,7 @@ Key directories:
 - `cosmic_mail/domain`
   - SQLAlchemy models, repositories, Pydantic schemas, validation
 - `cosmic_mail/services`
-  - business logic for organizations, agents, domains, inboxes, conversations, transport, sync, and webhooks
+  - business logic for organizations, agents, domains, inboxes, conversations, transport, sync, webhooks, and filter rules
 - `cosmic_mail/web/static`
   - operator console frontend
 - `infra/docker-compose.production.yml`
@@ -225,6 +236,15 @@ Key directories:
 - payload includes thread and message context
 - each webhook call includes a signature header for request verification
 
+### 8. Outbound Filter Rules
+
+- create whitelist or blacklist rules scoped to an agent or to a specific inbox
+- four pattern types: `exact` (full address), `domain` (`@acme.com`), `subdomain` (`@*.acme.com` and `@acme.com`), `wildcard` (fnmatch glob, e.g. `*@*.acme.com`)
+- precedence at send time: blacklists (across all scopes) are checked first and always win; then whitelist gates are applied independently per scope — if any scope has a whitelist, all recipients must match at least one rule in that scope
+- enforcement happens before approval queuing — a blocked draft never enters the approval queue
+- pre-flight check via `POST /v1/filter-rules/check` lets callers validate recipients before creating a draft
+- rules are manageable per-agent and per-inbox from both the API and the operator console
+
 ## API Surface
 
 All `/v1` routes require an API key. Use either:
@@ -246,7 +266,7 @@ Current API groups:
 ### Domains
 
 - `POST /v1/domains`
-- `GET /v1/domains`
+- `GET /v1/domains` — supports `?page=&per_page=` (max 200)
 - `POST /v1/domains/{domain_id}/verify-dns`
 - `GET /v1/domains/{domain_id}/deliverability`
 - `PATCH /v1/domains/{domain_id}/deliverability`
@@ -256,20 +276,20 @@ Current API groups:
 ### Agents
 
 - `POST /v1/agents`
-- `GET /v1/agents`
+- `GET /v1/agents` — supports `?page=&per_page=` (max 200)
 - `GET /v1/agents/{agent_id}`
 - `PATCH /v1/agents/{agent_id}`
 - `POST /v1/agents/{agent_id}/mailboxes`
 - `DELETE /v1/agents/{agent_id}/mailboxes/{mailbox_id}`
-- `POST /v1/agents/{agent_id}/avatar` — upload avatar image
-- `GET /v1/agents/{agent_id}/avatar` — serve avatar image
-- `POST /v1/agents/{agent_id}/signature-graphic` — upload signature logo
-- `GET /v1/agents/{agent_id}/signature-graphic` — serve signature logo
+- `POST /v1/agents/{agent_id}/avatar` — upload avatar image (JPEG / PNG / GIF / WebP; max `MAX_ATTACHMENT_SIZE_MB`)
+- `GET /v1/agents/{agent_id}/avatar` — serve avatar image (requires auth)
+- `POST /v1/agents/{agent_id}/signature-graphic` — upload signature logo (JPEG / PNG / GIF / WebP; max `MAX_ATTACHMENT_SIZE_MB`)
+- `GET /v1/agents/{agent_id}/signature-graphic` — serve signature logo (requires auth)
 
 ### Mailboxes
 
 - `POST /v1/mailboxes`
-- `GET /v1/mailboxes`
+- `GET /v1/mailboxes` — supports `?page=&per_page=` (max 200)
 - `GET /v1/mailboxes/{mailbox_id}/sync-policy`
 - `PATCH /v1/mailboxes/{mailbox_id}/sync-policy`
 - `POST /v1/mailboxes/{mailbox_id}/sync-inbox`
@@ -311,6 +331,26 @@ Current API groups:
 - `PATCH /v1/webhooks/{webhook_id}` — update endpoint URL or enabled state
 - `DELETE /v1/webhooks/{webhook_id}` — remove a webhook
 
+### Filter Rules (Agent-scoped)
+
+- `GET /v1/agents/{agent_id}/filter-rules` — list rules for an agent
+- `POST /v1/agents/{agent_id}/filter-rules` — create a single rule
+- `POST /v1/agents/{agent_id}/filter-rules/bulk` — bulk-create up to 100 rules
+- `GET /v1/agents/{agent_id}/filter-rules/{rule_id}` — get a single rule
+- `DELETE /v1/agents/{agent_id}/filter-rules/{rule_id}` — delete a rule
+
+### Filter Rules (Inbox-scoped)
+
+- `GET /v1/mailboxes/{mailbox_id}/filter-rules` — list rules for an inbox
+- `POST /v1/mailboxes/{mailbox_id}/filter-rules` — create a single rule
+- `POST /v1/mailboxes/{mailbox_id}/filter-rules/bulk` — bulk-create up to 100 rules
+- `GET /v1/mailboxes/{mailbox_id}/filter-rules/{rule_id}` — get a single rule
+- `DELETE /v1/mailboxes/{mailbox_id}/filter-rules/{rule_id}` — delete a rule
+
+### Filter Rules (Utility)
+
+- `POST /v1/filter-rules/check` — pre-flight check: test whether a set of recipients would be blocked by current rules before creating a draft; returns `passed` boolean and a `blocked` list with per-email reason, scope, and rule ID
+
 ### System
 
 - `GET /v1/system/auth-context`
@@ -336,6 +376,13 @@ Current sections:
 - `Approvals` — approval queue with filter tabs (Pending / Approved / Rejected / All) and split-pane detail view
 - `Webhooks`
 - `Access`
+
+Filter rules in the console:
+
+- "Filter rules" button on each row in the Agents table — opens a modal to manage that agent's rules
+- "Filter rules" button on each row in the Inboxes table — opens a modal to manage that inbox's rules
+- modal shows all active rules in a table with type, pattern, pattern type, label, and a delete button
+- inline form inside the modal to add a new rule without leaving the page
 
 Agent features in the console:
 
@@ -375,10 +422,15 @@ That lets you work on the control plane without a live James instance.
 
 ### Important environment variables
 
+**Core**
+
 - `COSMIC_MAIL_DATABASE_URL`
 - `COSMIC_MAIL_ADMIN_API_KEY`
-- `COSMIC_MAIL_SECRET_KEY`
+- `COSMIC_MAIL_SECRET_KEY` — **must be set to a strong random value in production**; the app logs a warning at startup if the default value is still in use
 - `COSMIC_MAIL_MAIL_ENGINE_BACKEND`
+
+**Mail engine (James)**
+
 - `COSMIC_MAIL_JAMES_WEBADMIN_URL`
 - `COSMIC_MAIL_JAMES_ADMIN_TOKEN`
 - `COSMIC_MAIL_PUBLIC_MAIL_HOSTNAME`
@@ -388,6 +440,9 @@ That lets you work on the control plane without a live James instance.
 - `COSMIC_MAIL_PUBLIC_IMAP_HOSTNAME`
 - `COSMIC_MAIL_PUBLIC_IMAP_PORT`
 - `COSMIC_MAIL_PUBLIC_IMAP_USE_SSL`
+
+**SMTP / IMAP transport**
+
 - `COSMIC_MAIL_SMTP_HOST`
 - `COSMIC_MAIL_SMTP_PORT`
 - `COSMIC_MAIL_SMTP_USE_SSL`
@@ -399,10 +454,18 @@ That lets you work on the control plane without a live James instance.
 - `COSMIC_MAIL_IMAP_USE_SSL`
 - `COSMIC_MAIL_IMAP_USE_STARTTLS`
 - `COSMIC_MAIL_IMAP_VALIDATE_CERTS`
+
+**Sync worker**
+
 - `COSMIC_MAIL_SYNC_WORKER_ENABLED`
 - `COSMIC_MAIL_SYNC_WORKER_INTERVAL_SECONDS`
 - `COSMIC_MAIL_SYNC_WORKER_BATCH_SIZE`
+
+**Storage and security**
+
 - `COSMIC_MAIL_STORAGE_PATH` — base path for avatar and signature-graphic uploads
+- `COSMIC_MAIL_MAX_ATTACHMENT_SIZE_MB` — max upload size for images (default `25`)
+- `COSMIC_MAIL_CORS_ALLOWED_ORIGINS` — JSON list of allowed CORS origins, e.g. `["https://app.example.com"]`; defaults to `["*"]` (open) for local dev
 
 ## Production Deployment
 
@@ -473,8 +536,9 @@ These are the biggest known gaps between the current checkpoint and a true publi
 - DNS automation and production onboarding UX
 - bounce and complaint handling
 - aliases and forwarding
-- abuse detection and rate control
-- richer search and operator analytics
+- per-organization rate quotas and abuse shaping (global rate limiting is in place; per-tenant enforcement is not)
+- Fernet key derivation upgrade (currently SHA-256 KDF; PBKDF2 migration would require a credential re-encryption pass)
+- richer operator analytics and search
 - migrations / backup / restore hardening
 
 ## Development Principles

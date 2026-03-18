@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from cosmic_mail.api.auth import AuthContext, authorize_domain, authorize_mailbox
@@ -58,12 +58,15 @@ def list_mailboxes(
     settings: Annotated[Settings, Depends(get_settings)],
     mail_engine: Annotated[MailEngine, Depends(get_mail_engine)],
     auth: Annotated[AuthContext, Depends(get_auth_context)],
+    page: Annotated[int, Query(ge=1)] = 1,
+    per_page: Annotated[int, Query(ge=1, le=200)] = 100,
 ) -> list[MailboxRead]:
     service = MailboxService(session, settings, mail_engine)
     mailboxes = service.list()
     if not auth.is_admin:
         mailboxes = [mailbox for mailbox in mailboxes if mailbox.organization_id == auth.organization_id]
-    return [MailboxRead.model_validate(mailbox) for mailbox in mailboxes]
+    start = (page - 1) * per_page
+    return [MailboxRead.model_validate(mailbox) for mailbox in mailboxes[start : start + per_page]]
 
 
 @router.get("/{mailbox_id}/sync-policy", response_model=MailboxSyncPolicyRead)

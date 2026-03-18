@@ -169,6 +169,7 @@ export function renderAgentsTable(agents) {
         <td class="td-actions"><div class="td-actions-inner">
           <button class="btn btn-ghost btn-xs" data-action="edit-agent" data-agent-id="${a.id}">Edit</button>
           <button class="btn btn-ghost btn-xs" data-action="manage-inboxes" data-agent-id="${a.id}">Inboxes</button>
+          <button class="btn btn-ghost btn-xs" data-action="agent-filter-rules" data-agent-id="${a.id}" data-agent-name="${esc(a.name)}">Filter rules</button>
           <button class="btn btn-ghost btn-xs" data-action="toggle-agent" data-agent-id="${a.id}" data-status="${a.status}">${a.status === "active" ? "Pause" : "Activate"}</button>
         </div></td>
       </tr>`;
@@ -308,12 +309,75 @@ export function renderInboxesTable(mailboxes, linkedAgentsForMailbox) {
         <td class="text-muted" style="font-size:12px">${fmtDate(m.last_synced_at)}</td>
         <td class="td-actions"><div class="td-actions-inner">
           <button class="btn btn-ghost btn-xs" data-action="view-threads" data-mailbox-id="${m.id}">Threads</button>
+          <button class="btn btn-ghost btn-xs" data-action="inbox-filter-rules" data-mailbox-id="${m.id}" data-mailbox-address="${esc(m.address)}">Filter rules</button>
           <button class="btn btn-ghost btn-xs" data-action="sync-mailbox" data-mailbox-id="${m.id}">Sync</button>
           <button class="btn btn-ghost btn-xs" data-action="toggle-sync" data-mailbox-id="${m.id}" data-enabled="${m.inbound_sync_enabled}">${m.inbound_sync_enabled ? "Disable sync" : "Enable sync"}</button>
         </div></td>
       </tr>`;
     }).join("")}
     </tbody></table></div>`;
+}
+
+// ── Filter Rules Modal ────────────────────────────────────────────────────────
+
+export function renderFilterRulesModal(rules, scopeType, scopeId) {
+  const wl = rules.filter(r => r.rule_type === "whitelist");
+  const bl = rules.filter(r => r.rule_type === "blacklist");
+
+  function ruleRow(r) {
+    const typeColor = r.rule_type === "whitelist" ? "green" : "red";
+    const ptLabel   = { exact:"exact", domain:"@domain", subdomain:"@*.subdomain", wildcard:"wildcard" }[r.pattern_type] || r.pattern_type;
+    return `<tr>
+      <td>${badge(r.rule_type, typeColor)}</td>
+      <td><span class="badge badge-muted" style="font-size:11px">${esc(ptLabel)}</span></td>
+      <td class="td-mono" style="font-size:12px">${esc(r.pattern)}</td>
+      <td class="text-muted" style="font-size:12px">${esc(r.label || "—")}</td>
+      <td class="td-actions"><div class="td-actions-inner">
+        <button class="btn btn-danger btn-xs" data-action="modal-delete-filter-rule"
+          data-scope-type="${esc(scopeType)}" data-scope-id="${esc(scopeId)}" data-rule-id="${esc(r.id)}">Remove</button>
+      </div></td>
+    </tr>`;
+  }
+
+  const tableHtml = rules.length
+    ? `<div class="table-wrap mb-16"><table class="table">
+        <thead><tr><th>Type</th><th>Match</th><th>Pattern</th><th>Label</th><th></th></tr></thead>
+        <tbody>${rules.map(ruleRow).join("")}</tbody>
+      </table></div>`
+    : `<p class="text-muted mb-16" style="font-size:12px">No rules yet — all recipients are permitted.</p>`;
+
+  return `
+    ${tableHtml}
+    <div class="card">
+      <div class="card-header"><div class="card-title" style="font-size:12.5px">Add a rule</div></div>
+      <div class="form-grid">
+        <div class="form-grid form-grid-2">
+          <div class="field"><label class="field-label">Type</label>
+            <select class="select" id="filter-rule-type">
+              <option value="whitelist">Whitelist — allow only</option>
+              <option value="blacklist">Blacklist — always block</option>
+            </select>
+          </div>
+          <div class="field"><label class="field-label">Match</label>
+            <select class="select" id="filter-rule-pattern-type">
+              <option value="domain">Domain (@acme.com)</option>
+              <option value="exact">Exact address</option>
+              <option value="subdomain">Domain + subdomains</option>
+              <option value="wildcard">Wildcard glob</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-grid form-grid-2">
+          <div class="field"><label class="field-label">Pattern *</label>
+            <input class="input input-mono" id="filter-rule-pattern" placeholder="acme.com or alice@acme.com"></div>
+          <div class="field"><label class="field-label">Label</label>
+            <input class="input" id="filter-rule-label" placeholder="e.g. Staging only"></div>
+        </div>
+        <button class="btn btn-primary btn-sm" data-action="modal-add-filter-rule"
+          data-scope-type="${esc(scopeType)}" data-scope-id="${esc(scopeId)}">Add rule</button>
+      </div>
+    </div>
+  `;
 }
 
 // ── Create Inbox Modal ────────────────────────────────────────────────────────

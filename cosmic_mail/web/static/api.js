@@ -128,4 +128,21 @@ export const api = {
   // System
   getSyncWorkerStatus: () => request("/v1/system/sync-worker"),
   runSyncWorker:       (orgId) => request("/v1/system/sync-worker/run-once", { method: "POST", body: orgId ? { organization_id: orgId } : {} }),
+
+  // Filter rules — agent-scoped
+  listAgentFilterRules:   (agentId) => request(`/v1/agents/${agentId}/filter-rules`),
+  createAgentFilterRule:  (agentId, body) => request(`/v1/agents/${agentId}/filter-rules`, { method: "POST", body }),
+  bulkCreateAgentFilterRules: (agentId, body) => request(`/v1/agents/${agentId}/filter-rules/bulk`, { method: "POST", body }),
+  getAgentFilterRule:     (agentId, ruleId) => request(`/v1/agents/${agentId}/filter-rules/${ruleId}`),
+  deleteAgentFilterRule:  (agentId, ruleId) => request(`/v1/agents/${agentId}/filter-rules/${ruleId}`, { method: "DELETE" }),
+
+  // Filter rules — inbox-scoped
+  listInboxFilterRules:   (mailboxId) => request(`/v1/mailboxes/${mailboxId}/filter-rules`),
+  createInboxFilterRule:  (mailboxId, body) => request(`/v1/mailboxes/${mailboxId}/filter-rules`, { method: "POST", body }),
+  bulkCreateInboxFilterRules: (mailboxId, body) => request(`/v1/mailboxes/${mailboxId}/filter-rules/bulk`, { method: "POST", body }),
+  getInboxFilterRule:     (mailboxId, ruleId) => request(`/v1/mailboxes/${mailboxId}/filter-rules/${ruleId}`),
+  deleteInboxFilterRule:  (mailboxId, ruleId) => request(`/v1/mailboxes/${mailboxId}/filter-rules/${ruleId}`, { method: "DELETE" }),
+
+  // Filter rules — check
+  checkFilterRules:       (body) => request("/v1/filter-rules/check", { method: "POST", body }),
 };
