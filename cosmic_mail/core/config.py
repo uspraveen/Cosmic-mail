@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     attachment_storage_path: str = "/data/attachments"
     max_attachment_size_mb: int = 25
     cors_allowed_origins: list[str] = ["*"]
+    rate_limit_requests_per_minute: int = 600
 
     model_config = SettingsConfigDict(
         env_prefix="COSMIC_MAIL_",

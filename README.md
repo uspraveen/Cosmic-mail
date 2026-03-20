@@ -466,6 +466,7 @@ That lets you work on the control plane without a live James instance.
 - `COSMIC_MAIL_STORAGE_PATH` — base path for avatar and signature-graphic uploads
 - `COSMIC_MAIL_MAX_ATTACHMENT_SIZE_MB` — max upload size for images (default `25`)
 - `COSMIC_MAIL_CORS_ALLOWED_ORIGINS` — JSON list of allowed CORS origins, e.g. `["https://app.example.com"]`; defaults to `["*"]` (open) for local dev
+- `COSMIC_MAIL_RATE_LIMIT_REQUESTS_PER_MINUTE` — max API requests per minute per IP + key prefix (default `600`)
 
 ## Production Deployment
 

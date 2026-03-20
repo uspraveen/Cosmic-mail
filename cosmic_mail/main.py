@@ -44,11 +44,10 @@ WEB_STATIC_DIR = Path(__file__).resolve().parent / "web" / "static"
 
 _rate_limit_store: dict[str, list[float]] = defaultdict(list)
 _rate_limit_lock = Lock()
-_RATE_LIMIT_REQUESTS = 120
 _RATE_LIMIT_WINDOW = 60  # seconds
 
 
-def _check_rate_limit(key: str) -> bool:
+def _check_rate_limit(key: str, limit: int) -> bool:
     """Return True if the request is allowed, False if rate limited."""
     now = time.monotonic()
     cutoff = now - _RATE_LIMIT_WINDOW
@@ -56,7 +55,7 @@ def _check_rate_limit(key: str) -> bool:
         timestamps = _rate_limit_store[key]
         # Prune old timestamps
         timestamps[:] = [t for t in timestamps if t > cutoff]
-        if len(timestamps) >= _RATE_LIMIT_REQUESTS:
+        if len(timestamps) >= limit:
             return False
         timestamps.append(now)
     return True
@@ -187,10 +186,10 @@ def create_app(
             client_ip = request.client.host if request.client else "unknown"
             api_key = request.headers.get("x-api-key") or ""
             rate_key = f"{client_ip}:{api_key[:16]}"
-            if not _check_rate_limit(rate_key):
+            if not _check_rate_limit(rate_key, active_settings.rate_limit_requests_per_minute):
                 return JSONResponse(
                     status_code=429,
-                    content={"detail": "rate limit exceeded — max 120 requests per minute"},
+                    content={"detail": f"rate limit exceeded — max {active_settings.rate_limit_requests_per_minute} requests per minute"},
                 )
         return await call_next(request)
 
