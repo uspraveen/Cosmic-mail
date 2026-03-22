@@ -59,11 +59,10 @@ What is built:
 
 What is not finished:
 
-- real external inbox-placement validation with Gmail / Outlook / enterprise providers
-- final TLS / HTTPS production setup with a real domain
-- bounce / complaint ingestion
+- real external inbox-placement validation with Gmail / Outlook / enterprise providers (DKIM/SPF/DMARC and DNSBL checks are in place; automated placement testing against real inboxes is not)
+- bounce / complaint ingestion pipeline — bounce detection on inbound sync is done (`is_bounce` / `bounce_type` stored per message); acting on bounces (suppression lists, auto-disable bad addresses, alerting) is not
 - alias and forwarding controls
-- per-organization rate quotas and abuse shaping for hostile multi-tenant use
+- per-organization rate quotas and abuse shaping for hostile multi-tenant use (global rate limiting is in place; per-tenant enforcement is not)
 - JMAP-based identity or event integration
 
 Short version:
@@ -307,8 +306,10 @@ Current API groups:
 
 ### Attachments
 
-- `GET /v1/messages/{message_id}/attachments` — list attachments for a message
-- `GET /v1/attachments/{attachment_id}/content` — download attachment content
+- `POST /v1/attachments/drafts/{draft_id}` — upload a file to a draft (multipart); attached automatically when the draft is sent
+- `DELETE /v1/attachments/{attachment_id}` — remove an attachment from a draft before sending
+- `GET /v1/messages/{message_id}/attachments` — list attachments on a received message
+- `GET /v1/attachments/{attachment_id}/download` — download attachment content (draft or inbound)
 
 ### Approval Queue
 
@@ -533,9 +534,9 @@ What it covers:
 
 These are the biggest known gaps between the current checkpoint and a true public-email product:
 
-- real external deliverability validation
+- real external inbox-placement validation (automated testing against Gmail / Outlook / enterprise inboxes)
 - DNS automation and production onboarding UX
-- bounce and complaint handling
+- bounce / complaint action pipeline (detection is done; suppression lists and auto-disable are not)
 - aliases and forwarding
 - per-organization rate quotas and abuse shaping (global rate limiting is in place; per-tenant enforcement is not)
 - Fernet key derivation upgrade (currently SHA-256 KDF; PBKDF2 migration would require a credential re-encryption pass)
