@@ -43,7 +43,7 @@ What is built:
 - mark-message-read tracking
 - approval queue for agent outbound — agents in approval mode queue drafts for human review before send
 - full approval queue management endpoints (list, review, edit, approve, reject)
-- webhooks — register HTTP endpoints to receive events on mail activity
+- webhooks — register HTTP endpoints to receive events on mail activity (`message.received`, `message.sent`, `approval.created`, `approval.approved`, `approval.rejected`)
 - background sync worker and manual sync controls
 - a built-in operator console served from `/`
 - Linux deployment artifacts for `Cosmic Mail + Postgres + Apache James`
@@ -331,6 +331,19 @@ Current API groups:
 - `GET /v1/webhooks/{webhook_id}` — get single webhook
 - `PATCH /v1/webhooks/{webhook_id}` — update endpoint URL or enabled state
 - `DELETE /v1/webhooks/{webhook_id}` — remove a webhook
+
+Supported `event_type` values:
+
+| Value | Fires when |
+|---|---|
+| `*` | All events (wildcard) |
+| `message.received` | Inbound mail synced to a mailbox |
+| `message.sent` | Outbound message sent |
+| `approval.created` | Draft queued for human review (agent in approval mode) |
+| `approval.approved` | Operator approves and send executes |
+| `approval.rejected` | Operator rejects the draft |
+
+`message.*` events are scoped to the mailbox the webhook is registered for (or all mailboxes if `mailbox_id` is omitted). `approval.*` events are org-wide — they fire regardless of which mailbox the draft belongs to.
 
 ### Filter Rules (Agent-scoped)
 
