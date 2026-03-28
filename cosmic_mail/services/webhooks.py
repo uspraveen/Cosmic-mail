@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 import httpx
 
-from cosmic_mail.domain.models import MailMessage, MailThread, Webhook, WebhookEventType
+from cosmic_mail.domain.models import MailDraft, MailMessage, MailThread, OutboundApproval, Webhook, WebhookEventType
 from cosmic_mail.domain.repositories import WebhookRepository
 
 logger = logging.getLogger(__name__)
@@ -62,6 +62,55 @@ def dispatch_webhooks(
         return
 
     payload = _build_payload(event_type, message, thread)
+    body = json.dumps(payload, default=str).encode()
+
+    for webhook in matching:
+        _fire(webhook, body)
+
+
+def _build_approval_payload(event_type: str, approval: OutboundApproval, draft: MailDraft) -> dict:
+    return {
+        "event": event_type,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "organization_id": approval.organization_id,
+        "approval": {
+            "id": approval.id,
+            "status": approval.status,
+            "agent_id": approval.agent_id,
+            "mailbox_id": approval.mailbox_id,
+            "draft_id": approval.draft_id,
+            "reviewer_note": approval.reviewer_note,
+            "created_at": approval.created_at.isoformat() if approval.created_at else None,
+            "reviewed_at": approval.reviewed_at.isoformat() if approval.reviewed_at else None,
+        },
+        "draft": {
+            "id": draft.id,
+            "subject": draft.subject,
+            "to_recipients": draft.to_recipients,
+            "cc_recipients": draft.cc_recipients,
+            "mailbox_id": draft.mailbox_id,
+        },
+    }
+
+
+def dispatch_approval_webhooks(
+    repo: WebhookRepository,
+    approval: OutboundApproval,
+    draft: MailDraft,
+    event_type: str,
+) -> None:
+    webhooks = repo.list_active_for_org(approval.organization_id)
+    if not webhooks:
+        return
+
+    matching = [
+        wh for wh in webhooks
+        if wh.event_type in (WebhookEventType.all.value, event_type)
+    ]
+    if not matching:
+        return
+
+    payload = _build_approval_payload(event_type, approval, draft)
     body = json.dumps(payload, default=str).encode()
 
     for webhook in matching:

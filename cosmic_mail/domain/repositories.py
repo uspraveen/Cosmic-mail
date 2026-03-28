@@ -481,6 +481,14 @@ class WebhookRepository:
             query = query.where(Webhook.organization_id == organization_id)
         return list(self.session.scalars(query))
 
+    def list_active_for_org(self, organization_id: str) -> list[Webhook]:
+        """Return all active webhooks for an organization."""
+        query = select(Webhook).where(
+            Webhook.organization_id == organization_id,
+            Webhook.is_active.is_(True),
+        )
+        return list(self.session.scalars(query))
+
     def list_active_for_mailbox(self, organization_id: str, mailbox_id: str) -> list[Webhook]:
         """Return active webhooks that match this mailbox (mailbox-specific or org-wide)."""
         from sqlalchemy import or_

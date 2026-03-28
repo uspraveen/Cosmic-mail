@@ -54,6 +54,9 @@ class WebhookEventType(str, Enum):
     all = "*"
     message_received = "message.received"
     message_sent = "message.sent"
+    approval_created = "approval.created"
+    approval_approved = "approval.approved"
+    approval_rejected = "approval.rejected"
 
 
 class Organization(Base):

@@ -16,7 +16,7 @@ from cosmic_mail.domain.models import (
     MessageDirection,
     OutboundApproval,
 )
-from cosmic_mail.domain.repositories import AgentMailboxLinkRepository, AgentRepository, AttachmentRepository, DomainRepository, DraftRepository, MailboxRepository, MessageRepository, OutboundApprovalRepository, ThreadRepository
+from cosmic_mail.domain.repositories import AgentMailboxLinkRepository, AgentRepository, AttachmentRepository, DomainRepository, DraftRepository, MailboxRepository, MessageRepository, OutboundApprovalRepository, ThreadRepository, WebhookRepository
 from cosmic_mail.domain.schemas import MailDraftCreate, MailboxSyncResult, ThreadReplyCreate
 from cosmic_mail.services.inbound import InboundMailboxClient, InboundMessageEnvelope
 from cosmic_mail.services.attachments import AttachmentService, AttachmentTooLargeError
@@ -165,6 +165,7 @@ class ConversationService:
             self._session.commit()
             self._session.refresh(draft)
             self._session.refresh(approval)
+            self._dispatch_approval_webhook("approval.created", approval, draft)
             return draft, None, None, approval
 
         draft, thread, message = self._execute_send(draft, mailbox, agent)
@@ -190,6 +191,7 @@ class ConversationService:
         self._session.add(approval)
         self._session.commit()
         self._session.refresh(approval)
+        self._dispatch_approval_webhook("approval.approved", approval, draft)
         return approval, draft, thread, message
 
     def reject_outbound(
@@ -210,6 +212,7 @@ class ConversationService:
         self._session.commit()
         self._session.refresh(approval)
         self._session.refresh(draft)
+        self._dispatch_approval_webhook("approval.rejected", approval, draft)
         return approval, draft
 
     def edit_approval_draft(
@@ -512,6 +515,14 @@ class ConversationService:
         if mailbox is None:
             raise MailboxNotFoundError("mailbox not found")
         return mailbox
+
+    def _dispatch_approval_webhook(self, event_type: str, approval: OutboundApproval, draft: MailDraft) -> None:
+        try:
+            from cosmic_mail.services.webhooks import dispatch_approval_webhooks
+            dispatch_approval_webhooks(WebhookRepository(self._session), approval, draft, event_type)
+        except Exception as exc:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).warning("Approval webhook dispatch failed: %s", exc)
 
     def _require_draft(self, draft_id: str | None) -> MailDraft:
         if draft_id is None:
